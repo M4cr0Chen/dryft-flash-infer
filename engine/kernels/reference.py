@@ -72,3 +72,15 @@ def swiglu(gate_up: torch.Tensor) -> torch.Tensor:
     up = gate_up[:, inter:].float()
     silu = (gate / (1.0 + torch.exp(-gate))).to(gate_up.dtype).float()
     return (silu * up).to(gate_up.dtype)
+
+
+def qkv_norm_rope_to_cache(
+    qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
+    k_cache, v_cache, eps,
+):
+    q = q_norm_rope(qkv, n_q, q_weight, cos, sin, positions, seq_len, eps)
+    kv_norm_rope_to_cache(
+        qkv, n_q * q_weight.shape[0], n_kv, k_weight, cos, sin, positions,
+        seq_len, k_cache, v_cache, eps,
+    )
+    return q

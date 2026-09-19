@@ -141,6 +141,10 @@ def test_prefill_logits_track_native(model_path):
         ).logits[:, -1, :].float()
 
     engine = Engine(model_path)
+    # Native 4.51.3 explicitly repeats KV heads before SDPA. enable_gqa=True
+    # can select a different CPU attention kernel, so use native's layout for
+    # this bit-exact arithmetic test. Other generation tests cover GQA.
+    engine._enable_gqa = False
     engine._ensure(2, 20, 4)
     with torch.no_grad():
         ids = engine._upload(prompts, 2, 20)
@@ -208,6 +212,14 @@ def test_speculation_is_exact(model_path, monkeypatch):
 
     monkeypatch.setattr(engine_module, "DRAFT", 4)
     monkeypatch.setattr(engine_module, "DRAFT_TARGET", 99.0)  # never governed
+    tuned_rows = []
+    choose = Engine._choose_matmuls
+
+    def record_rows(self, rows):
+        tuned_rows.append(rows)
+        return choose(self, rows)
+
+    monkeypatch.setattr(Engine, "_choose_matmuls", record_rows)
     prompts = _prompts(1, 24, seed=31)
     expected = _native_tokens(model_path, prompts, 12)
 
@@ -215,6 +227,7 @@ def test_speculation_is_exact(model_path, monkeypatch):
     got = list(engine.generate(prompts, 12))
     # draft is chosen per shape in _ensure, so it is only meaningful after a call
     assert engine.draft == 4, "speculation should be live at batch 1"
+    assert tuned_rows[-1] == 5, "verification must not select a batch-one GEMV"
     assert len(got) == 12
     assert got == expected
     assert engine.drafter.passes < 12, "no pass ever emitted more than one token"
@@ -248,3 +261,46 @@ def test_governor_holds_the_rate_down():
         proposal = drafter.propose()
         drafter.commit([phrase[0]] * (len(proposal) + 1) if proposal else [phrase[0]])
     assert drafter.rate <= 1.35, f"governor let the rate reach {drafter.rate}"
+
+
+def test_zero_output_does_no_work():
+    engine = Engine.__new__(Engine)
+    assert list(engine.generate([[1, 2]], 0)) == []
+
+
+def test_mlp_fusion_must_beat_selected_projection(monkeypatch):
+    """Beating plain cuBLAS must not replace an even faster selected runner."""
+    from types import SimpleNamespace
+    import engine as engine_module
+    from kernels import timing
+
+    engine = Engine.__new__(Engine)
+    engine.hidden, engine.device = 4, "cpu"
+    weight = torch.ones(8, 4, dtype=torch.bfloat16)
+    engine.layers = [SimpleNamespace(gate_up=weight)]
+    # A transposed operand makes accidentally timing F.linear observable.
+    transposed = weight.t().contiguous()
+    calls = []
+
+    def projection(x, w):
+        assert w is transposed
+        calls.append("selected")
+        return x @ w
+
+    engine.matmul = {"gate_up": projection}
+    engine.operand = {"gate_up": [transposed]}
+    monkeypatch.setattr(engine_module, "cuda_mlp", SimpleNamespace(
+        ready=lambda: True, CONFIGS=[None],
+        gate_up_swiglu=lambda x, w, config: engine_module.swiglu(x @ w.t()),
+    ))
+
+    def clock(fn, operands, **kwargs):
+        before = len(calls)
+        for operand in operands:
+            fn(operand)
+        return 1.0 if len(calls) > before else 1.5
+
+    monkeypatch.setattr(timing, "time_calls", clock)
+    engine._choose_mlp(1)
+    assert calls == ["selected"]
+    assert engine.fused_mlp is None

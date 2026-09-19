@@ -94,6 +94,59 @@ def _kv_kernel(
     tl.store(VC + slot, tl.load(src + V_OFF + d[None, :], mask=keep, other=0.0), mask=keep)
 
 
+@triton.jit
+def _qkv_kernel(
+    QKV, QN, KN, COS, SIN, POS, OUT, KC, VC, T, LMAX, eps,
+    STRIDE: tl.constexpr, D: tl.constexpr, NQ: tl.constexpr, NKV: tl.constexpr,
+    BH: tl.constexpr,
+):
+    row = tl.program_id(0)
+    block = tl.program_id(1)
+    is_query = block < tl.cdiv(NQ, BH)
+    head_block = tl.where(is_query, block, block - tl.cdiv(NQ, BH))
+    heads = head_block * BH + tl.arange(0, BH)
+    keep = (heads < tl.where(is_query, NQ, NKV))[:, None]
+    d = tl.arange(0, D)
+    partner = tl.where(d < D // 2, d + D // 2, d - D // 2)
+    lane = heads.to(tl.int64)[:, None] * D
+    src = QKV + row.to(tl.int64) * STRIDE + tl.where(is_query, 0, NQ * D) + lane
+    gain = tl.where(is_query, QN, KN)
+
+    x = tl.load(src + d[None, :], mask=keep, other=0.0).to(tl.float32)
+    xp = tl.load(src + partner[None, :], mask=keep, other=0.0).to(tl.float32)
+    w = tl.load(gain + d).to(tl.float32)[None, :]
+    wp = tl.load(gain + partner).to(tl.float32)[None, :]
+    p = tl.load(POS + (row % T)).to(tl.int64)
+    cos = tl.load(COS + p * D + d).to(tl.float32)[None, :]
+    sin = tl.load(SIN + p * D + d).to(tl.float32)[None, :]
+    y = _norm_rope(x, xp, w, wp, cos, sin, (d < D // 2)[None, :], eps, D)
+
+    if is_query:
+        tl.store(OUT + row.to(tl.int64) * (NQ * D) + lane + d[None, :], y, mask=keep)
+    else:
+        sequence = (row // T).to(tl.int64)
+        slot = ((sequence * NKV + heads.to(tl.int64)[:, None]) * LMAX + p) * D + d[None, :]
+        tl.store(KC + slot, y, mask=keep)
+        value = tl.load(src + NKV * D + d[None, :], mask=keep, other=0.0)
+        tl.store(VC + slot, value, mask=keep)
+
+
+def qkv_norm_rope_to_cache(
+    qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
+    k_cache, v_cache, eps,
+):
+    """Return Q and write K/V using one launch, preserving both old kernels' casts."""
+    rows, stride = qkv.shape
+    out = torch.empty((rows, n_q * _HEAD_DIM), dtype=qkv.dtype, device=qkv.device)
+    block = min(_HEADS_PER_PROGRAM, n_q, n_kv)
+    _qkv_kernel[(rows, triton.cdiv(n_q, block) + triton.cdiv(n_kv, block))](
+        qkv, q_weight, k_weight, cos, sin, positions, out, k_cache, v_cache,
+        seq_len, k_cache.shape[2], eps,
+        STRIDE=stride, D=_HEAD_DIM, NQ=n_q, NKV=n_kv, BH=block, num_warps=4,
+    )
+    return out
+
+
 def q_norm_rope(
     qkv: torch.Tensor,
     n_heads: int,

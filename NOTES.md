@@ -2,6 +2,67 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Re-audit, September 19
+
+The historical conclusions below are hypotheses, not hardware limits. In
+particular, the old `trace` and `utilisation` replay loops overran their cache
+and RoPE allocations; those traced step times need to be remeasured.
+
+The repaired tuner races captured graphs, compares MLP fusion against the
+already selected projection, and chooses verification kernels for the actual
+number of draft rows. The local harness now checks every measured sample and
+uses fresh processes per workload. FP8 is opt-in because the published rules
+still forbid quantization; the claimed organizer exception below is unverified.
+
+A paired H100 run against commit `9b95be8`, with BF16 on both sides and five
+corpus samples per public shape, measured the tuning repair:
+
+| Shape | Before, tok/s | Repaired, tok/s | Change |
+| --- | ---: | ---: | ---: |
+| public-0 | 230.3 | 240.7 | +4.5% |
+| public-1 | 490.8 | 496.9 | +1.2% |
+| public-2 | 2928.2 | 2972.6 | +1.5% |
+
+The public geometric mean increased 2.4%. All 15 candidate samples passed
+replay; the worst gap was 0.375 logits. The largest sample spread was 1.1%,
+and the longest load plus warmup was 39.3 seconds. This is not a hidden score
+or an official evaluation. Source hashes and full sample metrics are in
+`bench/results/paired-bf16-20260919.json`.
+
+The valid batch-one trace was 3.906 ms including two state-restoration copies.
+It selected existing Triton/CUDA projections that eager timing had passed over.
+For public-1, prefill accounts for 44.1% of total generation time, making it a
+substantial remaining target. See `bench/README.md` for the measurement method.
+
+The next edit combined Q normalization/RoPE and K/V cache writes into one
+Triton launch per layer, leaving the projection kernels intact. Direct GPU
+checks were bit-exact against the two old kernels for batches 1, 4 and 16,
+both decode and multi-token inputs, and nonzero cache batch offsets.
+
+A second paired H100 run, against the repaired engine above, measured:
+
+| Shape | Separate Q/KV, tok/s | Fused Q/KV, tok/s | Change |
+| --- | ---: | ---: | ---: |
+| public-0 | 240.2 | 245.9 | +2.4% |
+| public-1 | 494.1 | 498.5 | +0.9% |
+| public-2 | 2964.0 | 3005.9 | +1.4% |
+
+That is another 1.6% in the public geometric mean. All 15 candidate samples
+passed, with a worst replay gap of 0.375 logits. Small per-shape differences
+remain subject to noise. `bench/results/paired-rope-20260919.json` records the
+final source hash and all samples. No official evaluation was submitted.
+
+Validation: 33 CPU tests pass, including the tuner regression and all-sample
+replay checks; the actual fused GPU kernel passes six bit-exact cases; fixed
+decode replay stays at its original position/output over 65 replays on every
+paired workload. The CPU bit-exact prefill test now uses native's explicit
+KV-head expansion so it compares the same attention backend; the unmodified
+commit failed that test on this Mac with a 0.005859375 logit difference.
+
+The following sections preserve the earlier record; their strong claims about
+cuBLAS, speculation, and the only remaining optimization pool are not accepted
+as established limits.
+
 ## Where it stands
 
 **Ranked: 919.67 tok/s** on the six hidden workloads. Leaderboard top was 1130.6.

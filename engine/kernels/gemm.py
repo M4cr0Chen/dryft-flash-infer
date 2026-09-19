@@ -17,6 +17,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
+from .timing import time_calls
+
 _SM_TARGET = 132
 _PAD_M = 16
 
@@ -129,7 +131,8 @@ def _mm(x, weight):
     return torch.mm(x, weight)
 
 
-def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
+def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
+                use_graph=True):
     """Choose how to run this projection shape during decode.
 
     ``every`` is the weight from every layer. The measurement cycles through
@@ -143,10 +146,9 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
     be beaten by a clear margin, because the alternative to trusting a noisy
     measurement is a slower engine for the whole run.
 
-    Runs during warmup, so the sweep is free.
+    Runs during the budgeted warmup. Timing uses CUDA graphs when decode does.
     """
     import functools
-    import statistics
 
     weight = every[0]
     device, dtype = weight.device, weight.dtype
@@ -156,20 +158,8 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
     moved = weight.numel() * weight.element_size()
 
     def clock(fn, operands):
-        for w in operands[:4]:
-            fn(x, w)
-        runs = []
-        for _ in range(trials):
-            torch.cuda.synchronize()
-            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
-            a.record()
-            for _ in range(reps):
-                for w in operands:
-                    fn(x, w)
-            b.record()
-            torch.cuda.synchronize()
-            runs.append(a.elapsed_time(b) / (reps * len(operands)))
-        return statistics.median(runs)
+        return time_calls(lambda w: fn(x, w), operands, reps=reps,
+                          trials=trials, use_graph=use_graph)
 
     def agrees(out, tolerance=0.02):
         return (out.float() - reference.float()).abs().max().item() / scale < tolerance

@@ -30,6 +30,7 @@ from kernels import (
     add_rms_norm,
     kv_norm_rope_to_cache,
     q_norm_rope,
+    qkv_norm_rope_to_cache,
     rms_norm,
     swiglu,
 )
@@ -45,10 +46,9 @@ PREFILL_ROW_BUDGET = 32768
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
 TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
 
-#: Quantise the decode projections to FP8 with group scales. Prefill keeps
-#: bfloat16; it is compute-bound, so there is nothing to win and no reason to
-#: spend the accuracy. See kernels/fp8.py for the measured logit cost.
-USE_FP8 = os.environ.get("DRYFT_FP8", "on") == "on"
+#: The published rules require BF16. Keep the historical quantization
+#: experiment opt-in; its small sampled logit gaps are not a correctness proof.
+USE_FP8 = os.environ.get("DRYFT_FP8", "off") == "on"
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
@@ -57,6 +57,9 @@ USE_GRAPH = os.environ.get("DRYFT_GRAPH", "on") == "on"
 
 #: Pick projections per shape at warmup. Off keeps cuBLAS and F.linear.
 TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
+
+#: Combine independent Q and K/V normalization, rotation and cache writes.
+FUSE_ROPE = os.environ.get("DRYFT_FUSE_ROPE", "on") == "on"
 
 #: Draft tokens verified alongside the confirmed one. 0 disables speculation.
 #: Each pass runs DRAFT+1 positions whatever the draft finds, so the cost per
@@ -285,9 +288,11 @@ class Engine:
         ]
         self.out_event = [torch.cuda.Event() for _ in range(2)] if self.cuda else []
 
-        self._choose_matmuls(batch)
-
         self.draft = DRAFT if (batch == 1 and DRAFT > 0) else 0
+        # Verification processes multiple rows even when the request batch is
+        # one. A batch-one GEMV is not a valid runner for that matrix.
+        self._choose_matmuls(batch * (self.draft + 1))
+
         self.drafter = None
         if self.draft:
             width = self.draft + 1
@@ -313,8 +318,8 @@ class Engine:
     def _choose_matmuls(self, batch: int) -> None:
         """Race cuBLAS against the Triton kernel on every projection shape.
 
-        Decode only. Prefill has thousands of rows and cuBLAS owns that regime,
-        so it keeps ``F.linear`` unconditionally.
+        Decode only. Prefill currently keeps ``F.linear``; its larger matrices
+        need a separate tuning study.
         """
         self.matmul = {}
         self.operand = {}
@@ -347,7 +352,7 @@ class Engine:
         ):
             try:
                 chosen, transpose, note = pick_matmul(
-                    batch, every, packed=quantised.get(name)
+                    batch, every, packed=quantised.get(name), use_graph=USE_GRAPH
                 )
             except Exception:
                 chosen, transpose, note = F.linear, False, "cublas (selection failed)"
@@ -375,7 +380,7 @@ class Engine:
         intermediate never reaches memory. Wins at small batches and loses at
         sixteen, where one accumulator pair per row exhausts the registers.
         """
-        import statistics
+        from kernels.timing import time_calls
 
         self.fused_mlp = None
         if not (cuda_mlp is not None and cuda_mlp.ready()):
@@ -385,32 +390,21 @@ class Engine:
         reference = swiglu(F.linear(x, weights[0]))
         scale = reference.float().abs().max().item() or 1.0
 
-        def clock(fn):
-            for w in weights[:4]:
-                fn(w)
-            runs = []
-            for _ in range(5):
-                torch.cuda.synchronize()
-                a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
-                a.record()
-                for w in weights:
-                    fn(w)
-                b.record()
-                torch.cuda.synchronize()
-                runs.append(a.elapsed_time(b) / len(weights))
-            return statistics.median(runs)
+        def clock(fn, operands):
+            return time_calls(fn, operands, use_graph=USE_GRAPH)
 
-        split = clock(lambda w: swiglu(F.linear(x, w)))
+        projection = self.matmul["gate_up"]
+        split = clock(lambda w: swiglu(projection(x, w)), self.operand["gate_up"])
         best, chosen = split, None
         for config in cuda_mlp.CONFIGS:
             runner = (lambda w, c=config: cuda_mlp.gate_up_swiglu(x, w, config=c))
             try:
                 out = runner(weights[0])
             except Exception:
-                break
+                continue
             if (out.float() - reference.float()).abs().max().item() / scale > 0.02:
                 continue
-            elapsed = clock(runner)
+            elapsed = clock(runner, weights)
             if elapsed < best * 0.97:
                 best, chosen = elapsed, config
         if chosen is not None:
@@ -459,17 +453,22 @@ class Engine:
         normed = rms_norm(x, self.layers[0].norm_in, self.eps)
         for index, layer in enumerate(self.layers):
             qkv = project("qkv", index, normed, layer.qkv)
-            q = q_norm_rope(
-                qkv, self.n_q, layer.q_norm,
-                self.cos, self.sin, positions, seq_len, self.eps,
-            )
-            kv_norm_rope_to_cache(
-                qkv, self.q_width, self.n_kv, layer.k_norm,
-                self.cos, self.sin, positions, seq_len,
-                self.k_cache[index].narrow(0, offset, batch),
-                self.v_cache[index].narrow(0, offset, batch),
-                self.eps,
-            )
+            kc = self.k_cache[index].narrow(0, offset, batch)
+            vc = self.v_cache[index].narrow(0, offset, batch)
+            if FUSE_ROPE:
+                q = qkv_norm_rope_to_cache(
+                    qkv, self.n_q, self.n_kv, layer.q_norm, layer.k_norm,
+                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
+                )
+            else:
+                q = q_norm_rope(
+                    qkv, self.n_q, layer.q_norm,
+                    self.cos, self.sin, positions, seq_len, self.eps,
+                )
+                kv_norm_rope_to_cache(
+                    qkv, self.q_width, self.n_kv, layer.k_norm,
+                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
+                )
             attended = attend(q, index, batch, offset, seq_len)
             x, normed = add_rms_norm(
                 x, project("o", index, attended, layer.o), layer.norm_post, self.eps
@@ -634,6 +633,10 @@ class Engine:
         exactly max_new_tokens times. Every sequence has the same length.
         Never stops at end-of-sequence tokens.
         """
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be nonnegative")
+        if max_new_tokens == 0:
+            return
         if self._fast:
             batch, seq_len = len(input_ids), len(input_ids[0])
             try:

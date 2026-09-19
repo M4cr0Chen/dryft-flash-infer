@@ -55,9 +55,17 @@ image = (
     )
     .add_local_dir("engine", "/root/engine")
     .add_local_file("bench/harness.py", "/root/harness.py")
+    .add_local_file("bench/replay.py", "/root/replay.py")
+    .add_local_file("bench/gpu_checks.py", "/root/gpu_checks.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
 )
+
+# Optional checkout for paired comparisons on the same physical GPU. It is
+# mounted separately and imported only by a fresh benchmark subprocess.
+BASELINE_DIR = os.environ.get("DRYFT_BASELINE_DIR", "")
+if BASELINE_DIR:
+    image = image.add_local_dir(BASELINE_DIR, "/root/baseline")
 
 weights = modal.Volume.from_name("dryft-qwen3-4b", create_if_missing=True)
 app = modal.App("dryft-engine")
@@ -101,15 +109,80 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
     if detune:
         print(f"detuned: {detune}", flush=True)
     sys.path.insert(0, "/root")
-    import harness
-    from harness import run
+    from harness import run_isolated
 
     _describe_gpu(require_h100=True)
-    if corpus:
-        harness.load_corpus("/root/corpus.txt", WEIGHTS)
     if draft:
         print(f"speculation: draft={draft} target={target}", flush=True)
-    return run(WEIGHTS, shapes=shapes, samples=samples)
+    return run_isolated(WEIGHTS, shapes=shapes, samples=samples,
+                        corpus="/root/corpus.txt" if corpus else None)
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def compare_benchmark(samples: int = 5, corpus: bool = True):
+    """Alternate old/new order across workloads, on one physical H100."""
+    import os
+    import sys
+    from pathlib import Path
+
+    if not Path("/root/baseline/engine.py").is_file():
+        raise ValueError("baseline engine was not mounted; set DRYFT_BASELINE_DIR locally")
+    sys.path.insert(0, "/root")
+    from harness import PUBLIC_SHAPES, run_isolated
+    from gpu_checks import check_rope_fusion
+
+    _describe_gpu(require_h100=True)
+    check_rope_fusion()
+    os.environ["DRYFT_FP8"] = "off"
+    results = {"baseline": [], "candidate": []}
+    for index, shape in enumerate(PUBLIC_SHAPES):
+        order = ["baseline", "candidate"] if index % 2 == 0 else ["candidate", "baseline"]
+        for label in order:
+            print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / BF16", flush=True)
+            rows = run_isolated(
+                WEIGHTS, shapes=[shape], samples=samples,
+                corpus="/root/corpus.txt" if corpus else None,
+                engine_path="/root/baseline" if label == "baseline" else "/root/engine",
+            )
+            results[label].extend(rows)
+    return results
+
+
+@app.local_entrypoint()
+def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json"):
+    import hashlib
+    import json
+    import subprocess
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    if not BASELINE_DIR:
+        raise ValueError("set DRYFT_BASELINE_DIR to the baseline engine directory")
+
+    def fingerprint(root):
+        root = Path(root)
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*.py")):
+            digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+        return digest.hexdigest()
+
+    metadata = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "candidate_sha256": fingerprint("engine"),
+        "baseline_sha256": fingerprint(BASELINE_DIR),
+        "samples": samples, "corpus": corpus, "fp8": False,
+    }
+    results = compare_benchmark.remote(samples=samples, corpus=corpus)
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
+    for old, new in zip(results["baseline"], results["candidate"]):
+        print(f"{new['workload']}: {old['tps']:.1f} -> {new['tps']:.1f} tok/s "
+              f"({new['tps'] / old['tps']:.3f}x), "
+              f"all checks pass: {old['passes'] and new['passes']}")
+    print(f"Results saved to {path}")
 
 
 @app.function(
@@ -160,7 +233,7 @@ def profile(shape: str = "public-0"):
     from engine import Engine
     from harness import PUBLIC_SHAPES, _prompts
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     name, batch, length, steps = next(s for s in PUBLIC_SHAPES if s[0] == shape)
     engine = Engine(WEIGHTS)
     vocab = engine.embed.shape[0]
@@ -206,9 +279,31 @@ def shell():
 
 @app.local_entrypoint()
 def main(samples: int = 5, detune: str = "", draft: int = 0,
-         target: float = 1.25, corpus: bool = False):
-    benchmark.remote(samples=samples, detune=detune, draft=draft,
-                     target=target, corpus=corpus)
+         target: float = 1.25, corpus: bool = False, output: str = ""):
+    import hashlib
+    import json
+    import subprocess
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    digest = hashlib.sha256()
+    for path in sorted(Path("engine").rglob("*.py")):
+        digest.update(path.relative_to("engine").as_posix().encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    metadata = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "engine_sha256": digest.hexdigest(),
+        "samples": samples, "corpus": corpus, "detune": detune,
+        "draft": draft, "draft_target": target,
+    }
+    rows = benchmark.remote(samples=samples, detune=detune, draft=draft,
+                            target=target, corpus=corpus)
+    if output:
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**metadata, "workloads": rows}, indent=2) + "\n")
+        print(f"Results saved to {path}")
 
 
 @app.function(
@@ -226,10 +321,12 @@ def micro(batch: int = 1, context: int = 512):
     sys.path.insert(0, "/root/engine")
     from engine import Engine
     from harness import _prompts
+    from replay import FixedDecodeReplay
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     engine = Engine(WEIGHTS)
     list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 4))
+    fixed = FixedDecodeReplay(engine)
 
     def timed(fn, bytes_moved, label, reps=20):
         for _ in range(3):
@@ -282,7 +379,7 @@ def micro(batch: int = 1, context: int = 512):
     total += timed(lambda: F.linear(hidden, engine.embed),
                    engine.embed.numel() * 2, "lm_head")
 
-    step = timed(lambda: engine.graph.replay(), 8.045e9, "whole graphed step")
+    step = timed(fixed.replay, 8.045e9, "fixed step + state restore")
     print(f"  {'stages accounted':26s} {total * 1e3:8.3f} ms of {step * 1e3:.3f} ms"
           f"   ({(step - total) * 1e3:.3f} ms unexplained)", flush=True)
 
@@ -370,25 +467,33 @@ def trace(batch: int = 1, context: int = 512):
     sys.path.insert(0, "/root/engine")
     from engine import Engine
     from harness import _prompts
+    from replay import FixedDecodeReplay
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     engine = Engine(WEIGHTS)
     list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 8))
+    fixed = FixedDecodeReplay(engine)
+    print(f"fixed decode position {fixed.position}, capacity {engine.capacity}; "
+          "timings include two state-restoration copies", flush=True)
 
     reps = 50
     for _ in range(5):
-        engine.graph.replay()
+        fixed.replay()
     torch.cuda.synchronize()
+    expected = engine.emitted.clone()
     start = time.perf_counter()
     for _ in range(reps):
-        engine.graph.replay()
+        fixed.replay()
     torch.cuda.synchronize()
     wall = (time.perf_counter() - start) / reps
 
     with profile(activities=[ProfilerActivity.CUDA], record_shapes=False) as prof:
         for _ in range(reps):
-            engine.graph.replay()
+            fixed.replay()
         torch.cuda.synchronize()
+
+    if int(engine.pos.item()) != fixed.position or not torch.equal(engine.emitted, expected):
+        raise RuntimeError("fixed replay changed its prefix or output")
 
     totals = defaultdict(float)
     counts = defaultdict(int)
@@ -494,7 +599,7 @@ def trace_prefill(batch: int = 16, context: int = 512):
     from engine import Engine
     from harness import _prompts
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     engine = Engine(WEIGHTS)
     vocab = engine.embed.shape[0]
     list(engine.generate(_prompts(batch, context, vocab, 0), 4))
@@ -730,10 +835,12 @@ def utilisation(batch: int = 1, context: int = 512, seconds: int = 8):
     sys.path.insert(0, "/root/engine")
     from engine import Engine
     from harness import _prompts
+    from replay import FixedDecodeReplay
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     engine = Engine(WEIGHTS)
     list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 8))
+    fixed = FixedDecodeReplay(engine)
 
     fields = ("utilization.gpu,utilization.memory,clocks.sm,clocks.mem,"
               "power.draw,temperature.gpu,clocks_throttle_reasons.active")
@@ -756,18 +863,21 @@ def utilisation(batch: int = 1, context: int = 512, seconds: int = 8):
     torch.cuda.synchronize()
     start = time.perf_counter()
     replays = 0
-    while time.perf_counter() - start < seconds:
-        for _ in range(200):
-            engine.graph.replay()
-        replays += 200
-        torch.cuda.synchronize()
-    elapsed = time.perf_counter() - start
-    stop.set()
-    watcher.join(timeout=2)
+    try:
+        while time.perf_counter() - start < seconds:
+            for _ in range(200):
+                fixed.replay()
+            replays += 200
+            torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start
+    finally:
+        stop.set()
+        watcher.join(timeout=2)
 
     step = elapsed / replays
-    moved = 8.045e9 + batch * (context + 8) * 147456
+    moved = 8.045e9 + batch * (fixed.position + 1) * 147456
     print(f"\n{replays} decode steps in {elapsed:.2f}s -> {step * 1e6:.0f} us/step")
+    print(f"  fixed position {fixed.position}; includes state restoration")
     print(f"  achieved {moved / step / 1e12:.2f} TB/s of 3.35 peak "
           f"({moved / step / 3.35e12 * 100:.0f}%)")
 

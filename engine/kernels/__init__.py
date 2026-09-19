@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - the container always has Triton
         add_rms_norm,
         kv_norm_rope_to_cache,
         q_norm_rope,
+        qkv_norm_rope_to_cache,
         rms_norm,
         swiglu,
     )
@@ -32,7 +33,7 @@ else:
     from . import cuda_gemv, cuda_mlp, fp8
     from .gemm import pick_matmul
     from .norm import add_rms_norm, rms_norm
-    from .rope import kv_norm_rope_to_cache, q_norm_rope
+    from .rope import kv_norm_rope_to_cache, q_norm_rope, qkv_norm_rope_to_cache
     from .swiglu import swiglu
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "add_rms_norm",
     "kv_norm_rope_to_cache",
     "q_norm_rope",
+    "qkv_norm_rope_to_cache",
     "rms_norm",
     "swiglu",
 ]
