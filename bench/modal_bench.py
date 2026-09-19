@@ -103,7 +103,7 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
     import harness
     from harness import run
 
-    _describe_gpu()
+    _describe_gpu(require_h100=True)
     if corpus:
         harness.load_corpus("/root/corpus.txt", WEIGHTS)
     if draft:
@@ -125,7 +125,7 @@ def check():
     return run(WEIGHTS, samples=1)
 
 
-def _describe_gpu():
+def _describe_gpu(require_h100: bool = False):
     import torch
 
     prop = torch.cuda.get_device_properties(0)
@@ -140,6 +140,8 @@ def _describe_gpu():
     if "H100" not in prop.name:
         print(f"WARNING: {prop.name} is not the benchmark's H100 -- "
               f"timings from this run are not comparable", flush=True)
+        if require_h100:
+            raise RuntimeError(f"needed an H100, got {prop.name}; retry")
 
 
 @app.function(
@@ -845,13 +847,21 @@ def fp8_probe():
         err = (mine.float() - reference.float()).abs().max().item()
 
         bf16_ms = clock(lambda w: F.linear(x, w), every)
-        fp8_ms = clock(lambda p: fp8.fp8_matmul(x, p), packed)
+        fp8_ms, best_cfg = float("inf"), None
+        for cfg in fp8.CONFIGS:
+            try:
+                fp8.fp8_matmul(x, packed[0], config=cfg)
+            except Exception:
+                continue
+            ms = clock(lambda p, c=cfg: fp8.fp8_matmul(x, p, config=c), packed)
+            if ms < fp8_ms:
+                fp8_ms, best_cfg = ms, cfg
         bf16_bytes = every[0].numel() * 2
         fp8_bytes = fp8.bytes_moved(packed[0])
         print(f"  {name:8s} rel_err {err / scale:8.5f}   "
               f"bf16 {bf16_ms * 1e3:6.1f}us {bf16_bytes / (bf16_ms * 1e-3) / 1e12:.2f}TB/s   "
               f"fp8 {fp8_ms * 1e3:6.1f}us {fp8_bytes / (fp8_ms * 1e-3) / 1e12:.2f}TB/s   "
-              f"speedup {bf16_ms / fp8_ms:.2f}x", flush=True)
+              f"speedup {bf16_ms / fp8_ms:.2f}x  {best_cfg}", flush=True)
         del every, packed
         torch.cuda.empty_cache()
 

@@ -47,7 +47,7 @@ TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
 #: Quantise the decode projections to FP8 with group scales. Prefill keeps
 #: bfloat16; it is compute-bound, so there is nothing to win and no reason to
 #: spend the accuracy. See kernels/fp8.py for the measured logit cost.
-USE_FP8 = os.environ.get("DRYFT_FP8", "off") == "on"
+USE_FP8 = os.environ.get("DRYFT_FP8", "on") == "on"
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
