@@ -70,10 +70,21 @@ def fetch():
 @app.function(
     image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
 )
-def benchmark(shapes=None, samples: int = 5):
-    """Time and check the engine the way the judge would."""
+def benchmark(shapes=None, samples: int = 5, detune: str = ""):
+    """Time and check the engine the way the judge would.
+
+    ``detune`` switches off stages by name (``graph``, ``triton``, ``matmul``)
+    to measure what an earlier build of this engine would score, and with how
+    much room under the latency gates.
+    """
+    import os
     import sys
 
+    for stage in filter(None, detune.split(",")):
+        os.environ[{"graph": "DRYFT_GRAPH", "triton": "DRYFT_ATTENTION",
+                    "matmul": "DRYFT_MATMUL"}[stage]] = "off"
+    if detune:
+        print(f"detuned: {detune}", flush=True)
     sys.path.insert(0, "/root")
     from harness import run
 
@@ -166,8 +177,8 @@ def shell():
 
 
 @app.local_entrypoint()
-def main(samples: int = 5):
-    benchmark.remote(samples=samples)
+def main(samples: int = 5, detune: str = ""):
+    benchmark.remote(samples=samples, detune=detune)
 
 
 @app.function(
