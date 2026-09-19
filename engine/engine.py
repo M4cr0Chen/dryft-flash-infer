@@ -355,6 +355,8 @@ class Engine:
             # original, where the shape is wide enough not to care.
             if transpose == "fp8":
                 self.operand[name] = quantised[name]
+            elif transpose == "cuda":
+                self.operand[name] = every
             elif transpose:
                 self.operand[name] = [w.t().contiguous() for w in every]
             else:

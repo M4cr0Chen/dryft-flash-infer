@@ -205,6 +205,23 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
             if elapsed < best[2]:
                 best = (runner, "fp8", elapsed)
 
+    try:
+        from . import cuda_gemv
+
+        if cuda_gemv.ready():
+            for cfg in cuda_gemv.CONFIGS:
+                runner = functools.partial(cuda_gemv.cuda_matmul, config=cfg)
+                try:
+                    if not agrees(runner(x, every[0])):
+                        continue
+                except Exception:
+                    continue
+                elapsed = clock(runner, every)
+                if elapsed < best[2]:
+                    best = (runner, "cuda", elapsed)
+    except Exception:
+        pass
+
     for config in _CONFIGS:
         candidate = functools.partial(skinny_matmul, config=config)
         try:
@@ -220,6 +237,8 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
     fn, transpose, elapsed = best
     if fn is not F.linear and elapsed > incumbent * 0.97:
         fn, transpose, elapsed = F.linear, False, incumbent
+    if transpose == "cuda":
+        return fn, "cuda", f"cuda {moved / (elapsed * 1e-3) / 1e12:.2f} TB/s"
     if transpose == "fp8":
         from .fp8 import bytes_moved
 

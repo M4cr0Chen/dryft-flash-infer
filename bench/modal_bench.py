@@ -920,3 +920,185 @@ def fp8_isolate():
                   f"{ms * 1e3:7.1f}us  {moved / (ms * 1e-3) / 1e12:5.2f} TB/s", flush=True)
         del w
         torch.cuda.empty_cache()
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def compiler_probe():
+    """Can we compile CUDA at load time, and how? This gates the whole plan.
+
+    Three routes, cheapest-to-verify first. nvcc via cpp_extension is easiest
+    but needs a toolkit the runtime image may not carry. NVRTC ships inside the
+    torch wheel itself, so it is present wherever torch is -- that is the route
+    that survives an unknown container.
+    """
+    import ctypes
+    import os
+    import shutil
+    import subprocess
+    import sys
+    import time
+
+    import torch
+
+    _describe_gpu()
+    print(f"torch {torch.__version__}  cuda {torch.version.cuda}")
+
+    print("\n1. nvcc on PATH?")
+    nvcc = shutil.which("nvcc") or (
+        f"{os.environ.get('CUDA_HOME', '/usr/local/cuda')}/bin/nvcc"
+    )
+    if os.path.exists(nvcc):
+        print(f"   found {nvcc}")
+        print("  ", subprocess.run([nvcc, "--version"], capture_output=True,
+                                   text=True).stdout.strip().splitlines()[-1])
+    else:
+        print("   NOT FOUND")
+
+    print("\n2. a PTX toolchain anywhere in site-packages?")
+    roots = {os.path.dirname(os.path.dirname(torch.__file__))}
+    try:
+        import triton
+        roots.add(os.path.dirname(os.path.dirname(triton.__file__)))
+    except Exception:
+        pass
+    hits = {}
+    for base in roots:
+        for root, _, files in os.walk(base):
+            for f in files:
+                for want in ("libnvrtc.so", "ptxas", "libcuda.so", "nvdisasm"):
+                    if f.startswith(want) and want not in hits:
+                        hits[want] = os.path.join(root, f)
+    for want in ("libnvrtc.so", "ptxas", "libcuda.so", "nvdisasm"):
+        print(f"   {want:14s} {hits.get(want, 'NOT FOUND')}")
+    found = hits.get("libnvrtc.so")
+
+    if found:
+        try:
+            nvrtc = ctypes.CDLL(found)
+            major, minor = ctypes.c_int(), ctypes.c_int()
+            nvrtc.nvrtcVersion(ctypes.byref(major), ctypes.byref(minor))
+            print(f"   nvrtc {major.value}.{minor.value} loads via ctypes")
+
+            src = b"extern \"C\" __global__ void touch(float* x){ x[0]=1.0f; }\n"
+            prog = ctypes.c_void_p()
+            rc = nvrtc.nvrtcCreateProgram(ctypes.byref(prog), src, b"t.cu", 0, None, None)
+            opts = (ctypes.c_char_p * 1)(b"--gpu-architecture=compute_90")
+            rc2 = nvrtc.nvrtcCompileProgram(prog, 1, opts)
+            size = ctypes.c_size_t()
+            nvrtc.nvrtcGetPTXSize(prog, ctypes.byref(size))
+            print(f"   compile rc={rc},{rc2}  ptx bytes={size.value}  -> "
+                  f"{'WORKS' if rc2 == 0 and size.value > 0 else 'FAILED'}")
+        except Exception as exc:
+            print(f"   ctypes route failed: {type(exc).__name__}: {exc}")
+
+    print("\n3. cooperative launch available on the driver?")
+    try:
+        libcuda = ctypes.CDLL("libcuda.so.1")
+        attr = ctypes.c_int()
+        # CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH = 95
+        libcuda.cuInit(0)
+        dev = ctypes.c_int()
+        libcuda.cuDeviceGet(ctypes.byref(dev), 0)
+        libcuda.cuDeviceGetAttribute(ctypes.byref(attr), 95, dev)
+        print(f"   cooperative launch supported: {bool(attr.value)}")
+        print(f"   cuLaunchCooperativeKernel present: "
+              f"{hasattr(libcuda, 'cuLaunchCooperativeKernel')}")
+    except Exception as exc:
+        print(f"   {type(exc).__name__}: {exc}")
+
+    print("\n4. cpp_extension.load_inline end to end (times the compile)")
+    try:
+        from torch.utils.cpp_extension import load_inline
+
+        start = time.perf_counter()
+        mod = load_inline(
+            name="probe_mk",
+            cpp_sources="torch::Tensor go(torch::Tensor x);",
+            cuda_sources=(
+                "#include <torch/extension.h>\n"
+                "__global__ void k(float* x){ x[threadIdx.x] += 1.0f; }\n"
+                "torch::Tensor go(torch::Tensor x){ k<<<1,32>>>(x.data_ptr<float>());"
+                " return x; }\n"
+            ),
+            functions=["go"], verbose=False,
+        )
+        took = time.perf_counter() - start
+        x = torch.zeros(32, device="cuda")
+        mod.go(x)
+        torch.cuda.synchronize()
+        print(f"   WORKS in {took:.1f}s, result {x[0].item()}")
+    except Exception as exc:
+        print(f"   FAILED: {type(exc).__name__}: {str(exc)[:300]}")
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def cuda_probe():
+    """Does the JIT route work, is the GEMV correct, and does it beat cuBLAS?"""
+    import statistics
+    import sys
+    import time
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from kernels import cuda_gemv
+
+    start = time.perf_counter()
+    ok = cuda_gemv.ready()
+    print(f"  nvrtc compile: {'OK' if ok else 'FAILED'} in {time.perf_counter() - start:.1f}s")
+    if not ok:
+        return
+
+    def clock(fn, operands, reps=3, trials=5):
+        for w in operands[:4]:
+            fn(w)
+        runs = []
+        for _ in range(trials):
+            torch.cuda.synchronize()
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                for w in operands:
+                    fn(w)
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / (reps * len(operands)))
+        return statistics.median(runs)
+
+    for name, n, k in [("qkv", 6144, 2560), ("o", 2560, 4096),
+                       ("gate_up", 19456, 2560), ("down", 2560, 9728),
+                       ("lm_head", 151936, 2560)]:
+        every = [torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
+                 for _ in range(8)]
+        x = torch.randn(1, k, dtype=torch.bfloat16, device="cuda")
+        reference = F.linear(x, every[0])
+        scale = reference.float().abs().max().item()
+
+        try:
+            mine = cuda_gemv.cuda_matmul(x, every[0])
+            torch.cuda.synchronize()
+        except Exception as exc:
+            print(f"  {name:8s} launch failed: {type(exc).__name__}: {exc}"[:200])
+            continue
+        err = (mine.float() - reference.float()).abs().max().item() / scale
+
+        bf16_ms = clock(lambda w: F.linear(x, w), every)
+        best, best_cfg = float("inf"), None
+        for cfg in cuda_gemv.CONFIGS:
+            ms = clock(lambda w, c=cfg: cuda_gemv.cuda_matmul(x, w, config=c), every)
+            if ms < best:
+                best, best_cfg = ms, cfg
+        moved = every[0].numel() * 2
+        print(f"  {name:8s} rel_err {err:8.5f}  cublas {bf16_ms * 1e3:6.1f}us "
+              f"{moved / (bf16_ms * 1e-3) / 1e12:.2f}TB/s   "
+              f"cuda {best * 1e3:6.1f}us {moved / (best * 1e-3) / 1e12:.2f}TB/s   "
+              f"speedup {bf16_ms / best:.2f}x  {best_cfg}", flush=True)
+        del every
+        torch.cuda.empty_cache()
