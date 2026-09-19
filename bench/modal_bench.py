@@ -311,3 +311,126 @@ def _forced(backend, q, k, v, mask):
 
     with sdpa_kernel(backend):
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def trace(batch: int = 1, context: int = 512):
+    """Per-kernel time inside one graphed decode step, and the gap around it."""
+    import sys
+    import time
+    from collections import defaultdict
+
+    import torch
+    from torch.profiler import ProfilerActivity, profile
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    from engine import Engine
+    from harness import _prompts
+
+    _describe_gpu()
+    engine = Engine(WEIGHTS)
+    list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 8))
+
+    reps = 50
+    for _ in range(5):
+        engine.graph.replay()
+    torch.cuda.synchronize()
+    start = time.perf_counter()
+    for _ in range(reps):
+        engine.graph.replay()
+    torch.cuda.synchronize()
+    wall = (time.perf_counter() - start) / reps
+
+    with profile(activities=[ProfilerActivity.CUDA], record_shapes=False) as prof:
+        for _ in range(reps):
+            engine.graph.replay()
+        torch.cuda.synchronize()
+
+    totals = defaultdict(float)
+    counts = defaultdict(int)
+    for event in prof.key_averages():
+        if event.self_device_time_total > 0:
+            totals[event.key] += event.self_device_time_total
+            counts[event.key] += event.count
+
+    grand = sum(totals.values()) / reps
+    print(f"\nbatch {batch}  step wall {wall * 1e3:.3f} ms   "
+          f"kernel time {grand:.1f} us   gap {wall * 1e6 - grand:.1f} us", flush=True)
+    print(f"  {'kernel':52s} {'calls':>6s} {'us/step':>9s} {'us/call':>8s}", flush=True)
+    for key in sorted(totals, key=totals.get, reverse=True)[:18]:
+        per_step = totals[key] / reps
+        per_call = totals[key] / max(1, counts[key])
+        print(f"  {key[:52]:52s} {counts[key] // reps:6d} {per_step:9.1f} {per_call:8.2f}",
+              flush=True)
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def layout():
+    """Does cuBLAS prefer the weight transposed? Median of repeated trials."""
+    import statistics
+    import sys
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from kernels.gemm import _CONFIGS, skinny_matmul
+
+    shapes = [
+        ("qkv", 6144, 2560), ("o", 2560, 4096),
+        ("gate_up", 19456, 2560), ("down", 2560, 9728),
+        ("lm_head", 151936, 2560),
+    ]
+
+    def clock(fn, reps=100, trials=5):
+        for _ in range(10):
+            fn()
+        runs = []
+        for _ in range(trials):
+            torch.cuda.synchronize()
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                fn()
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / reps)
+        return statistics.median(runs)
+
+    for batch in (1, 4, 16):
+        print(f"\nbatch {batch}", flush=True)
+        for name, n, k in shapes:
+            w = torch.randn(n, k, dtype=torch.bfloat16, device="cuda")
+            wt = w.t().contiguous()
+            x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")
+            moved = w.numel() * 2
+
+            rates = {
+                "linear [n,k]": clock(lambda: F.linear(x, w)),
+                "mm     [k,n]": clock(lambda: torch.mm(x, wt)),
+            }
+            best_cfg, best_ms = None, float("inf")
+            for cfg in _CONFIGS:
+                try:
+                    skinny_matmul(x, w, config=cfg)
+                except Exception:
+                    continue
+                ms = clock(lambda c=cfg: skinny_matmul(x, w, config=c), reps=50, trials=3)
+                if ms < best_ms:
+                    best_cfg, best_ms = cfg, ms
+            rates[f"triton {best_cfg}"] = best_ms
+
+            line = "  ".join(
+                f"{label} {moved / (ms * 1e-3) / 1e12:5.2f}" for label, ms in rates.items()
+            )
+            winner = min(rates, key=rates.get)
+            print(f"  {name:8s} [{n},{k}]  {line}   -> {winner}", flush=True)
+            del w, wt
+            torch.cuda.empty_cache()

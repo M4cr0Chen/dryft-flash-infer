@@ -34,6 +34,8 @@ problems, not decode problems.
 | public-2  b16 x 512->128 | 560.2 | 2345.9 | **2760.4** | pass |
 | **geomean** | ~157 | 524.1 | **650.8** | |
 
+Then per-shape projection selection: **691.4** (230.9 / 491.5 / 2911.9).
+
 Spread 0.003-0.007 (gate 0.25). TTFT ratio 0.40-0.58, TPOT 0.17-0.18 (gate
 1.10) -- no latency pressure at all. Peak memory 0.18 (gate 0.90). Tie gap
 0.0000 on two shapes and 0.1250 on public-2, against a 2.0 margin; the one
@@ -106,18 +108,50 @@ Untested until the platform runs it: Triton codegen and CUDA graph capture.
 - The native model is kept alive as the fallback, costing ~4.7 GiB of
   duplicated q/k/v/gate/up. Drop it if a workload ever returns `memory_limit`.
 
+## Where the decode step actually goes (traced, batch 1)
+
+`modal run bench/modal_bench.py::trace`. Kernel time 4207 us, launch gap only
+239 us. **The GEMMs are 84% of the step**; every Triton kernel together is 15%.
+So the small-kernel count was never the problem, and fusing them further is not
+where the time is.
+
+Per projection, measured streaming all 36 layers' weights (not one in a loop --
+qkv is 31 MiB and o_proj 21 MiB, both inside a 50 MiB L2, so a tight loop
+reports L2 bandwidth and picks the wrong kernel):
+
+| projection | GB/step | `linear [n,k]` | `mm [k,n]` | triton | taken |
+| --- | ---: | ---: | ---: | ---: | --- |
+| qkv | 1.13 | 2.08 | **2.30** | 1.57 | cublas-t |
+| o | 0.76 | 1.66 | **1.76** | 1.00 | cublas-t |
+| gate_up | 3.59 | 2.47 | 2.46 | **2.65** | triton |
+| down | 1.79 | 1.83 | **2.07** | 1.45 | cublas-t |
+| lm_head | 0.78 | 2.94 | 2.99 | **3.04** | triton |
+
+cuBLAS is layout-sensitive: transposing the weight to `[in, out]` and using
+`torch.mm` is worth 10-13% on three of the five. The engine races cuBLAS in
+both layouts against a swept Triton config during warmup and keeps the winner,
+requiring a 3% margin before moving off cuBLAS so a noisy measurement cannot
+make the engine slower.
+
+`o_proj` and `down_proj` are still the floor at 1.4-2.1 TB/s. Both have N=2560,
+which is only 2560 outputs to spread over 132 SMs against a long K reduction.
+Neither cuBLAS layout nor my split-K kernel cracks it. Getting those two to 2.9
+TB/s is worth about 13% of the step and is the next real target.
+
 ## Done
 
 1. ~~Measure.~~ Modal H100 harness replicating the judge: `bench/harness.py`.
 2. ~~Flash-decoding attention in Triton.~~ +26% geomean.
+3. ~~Per-shape projection selection.~~ +6%.
 
 ## Next, in order of expected payoff
 
-3. **Triton GEMV for the projections.** `o_proj` and `down_proj` run at 1.45
-   and 1.79 TB/s where `gate_up` gets 2.48. Closing that is worth ~0.8 ms of a
-   4.35 ms step.
-4. **Fewer launches.** ~180 small elementwise kernels a step. Merging the q and
-   kv RoPE kernels saves 36; folding SwiGLU into an epilogue saves 36 more.
+3. **`o_proj` and `down_proj`.** The last weak projections, ~13% of the step.
+   Needs a better split-K Triton kernel than mine: deeper pipelining, async
+   copies, `tl.max_contiguous` hints. Beating cuBLAS at a skinny reduction is
+   genuinely hard and my first attempt lost.
+4. ~~Fewer launches.~~ Not worth it: the trace says launch gap is 239 us of
+   4446, and all the Triton kernels together are 625 us. Dropped.
 5. **Prefill** is already near roofline; leave it.
 6. **Speculative decoding.** Last. No draft model exists in the sandbox, so it
    is n-gram or Jacobi self-speculation. Watch the **25% spread gate**:

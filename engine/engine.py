@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from kernels import (
     HAVE_TRITON,
     DecodeAttention,
+    pick_matmul,
     add_rms_norm,
     kv_norm_rope_to_cache,
     q_norm_rope,
@@ -259,6 +260,8 @@ class Engine:
         ]
         self.out_event = [torch.cuda.Event() for _ in range(2)] if self.cuda else []
 
+        self._choose_matmuls(batch)
+
         self.decode_attention = None
         if HAVE_TRITON and TRITON_ATTENTION:
             self.decode_attention = DecodeAttention(
@@ -267,6 +270,39 @@ class Engine:
             )
 
         self._capture()
+
+    def _choose_matmuls(self, batch: int) -> None:
+        """Race cuBLAS against the Triton kernel on every projection shape.
+
+        Decode only. Prefill has thousands of rows and cuBLAS owns that regime,
+        so it keeps ``F.linear`` unconditionally.
+        """
+        self.matmul = {}
+        self.operand = {}
+        if not (HAVE_TRITON and pick_matmul is not None):
+            return
+        first = self.layers[0]
+        for name, sample, every in (
+            ("qkv", first.qkv, [ly.qkv for ly in self.layers]),
+            ("o", first.o, [ly.o for ly in self.layers]),
+            ("gate_up", first.gate_up, [ly.gate_up for ly in self.layers]),
+            ("down", first.down, [ly.down for ly in self.layers]),
+            ("lm_head", self.embed, [self.embed]),
+        ):
+            try:
+                chosen, transpose, note = pick_matmul(batch, every)
+            except Exception:
+                chosen, transpose, note = F.linear, False, "cublas (selection failed)"
+            self.matmul[name] = chosen
+            # A transposed layout is a second copy of the weight. Worth it for
+            # the projections cuBLAS reads better that way; prefill keeps the
+            # original, where the shape is wide enough not to care.
+            self.operand[name] = (
+                [w.t().contiguous() for w in every] if transpose else every
+            )
+            print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
+        if self.cuda:
+            torch.cuda.empty_cache()
 
     def _capture(self) -> None:
         """Compile every kernel on this shape, then record one decode step."""
@@ -293,16 +329,21 @@ class Engine:
 
     # ---------------------------------------------------------------- forward
 
-    def _blocks(self, x, positions, seq_len, batch, offset, attend):
+    def _blocks(self, x, positions, seq_len, batch, offset, attend, matmul=None):
         """All layers over ``x`` of shape ``[rows, hidden]``; returns the final norm.
 
         Each layer's residual add is fused into the norm that consumes it, and
         the last one borrows the model's output norm, so the chain never
         materialises a residual only to read it back.
         """
+        def project(name, index, source, fallback):
+            if not matmul:
+                return F.linear(source, fallback)
+            return matmul[name](source, self.operand[name][index])
+
         normed = rms_norm(x, self.layers[0].norm_in, self.eps)
         for index, layer in enumerate(self.layers):
-            qkv = F.linear(normed, layer.qkv)
+            qkv = project("qkv", index, normed, layer.qkv)
             q = q_norm_rope(
                 qkv, self.n_q, layer.q_norm,
                 self.cos, self.sin, positions, seq_len, self.eps,
@@ -316,9 +357,10 @@ class Engine:
             )
             attended = attend(q, index, batch, offset, seq_len)
             x, normed = add_rms_norm(
-                x, F.linear(attended, layer.o), layer.norm_post, self.eps
+                x, project("o", index, attended, layer.o), layer.norm_post, self.eps
             )
-            down = F.linear(swiglu(F.linear(normed, layer.gate_up)), layer.down)
+            gate_up = project("gate_up", index, normed, layer.gate_up)
+            down = project("down", index, swiglu(gate_up), layer.down)
             following = (
                 self.layers[index + 1].norm_in
                 if index + 1 < self.n_layers
@@ -387,8 +429,15 @@ class Engine:
         # The new token takes slot ``pos``, so keys 0..pos inclusive are live.
         torch.le(self.arange, self.pos, out=self.mask)
         x = F.embedding(self.token, self.embed).view(self.batch, self.hidden)
-        normed = self._blocks(x, self.pos, 1, self.batch, 0, self._attend_decode)
-        chosen = F.linear(normed, self.embed).argmax(dim=-1)
+        normed = self._blocks(
+            x, self.pos, 1, self.batch, 0, self._attend_decode, self.matmul
+        )
+        head = (
+            self.matmul["lm_head"](normed, self.operand["lm_head"][0])
+            if self.matmul
+            else F.linear(normed, self.embed)
+        )
+        chosen = head.argmax(dim=-1)
         self.token.copy_(chosen.view(self.batch, 1))
         self.emitted.copy_(chosen)
         self.pos.add_(1)

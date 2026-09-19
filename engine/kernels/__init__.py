@@ -11,6 +11,7 @@ try:
 except Exception:  # pragma: no cover - the container always has Triton
     HAVE_TRITON = False
     DecodeAttention = None
+    pick_matmul = None
     from .reference import (
         add_rms_norm,
         kv_norm_rope_to_cache,
@@ -23,6 +24,7 @@ except Exception:  # pragma: no cover - the container always has Triton
 else:
     HAVE_TRITON = True
     from .attention import DecodeAttention
+    from .gemm import pick_matmul
     from .norm import add_rms_norm, rms_norm
     from .rope import kv_norm_rope_to_cache, q_norm_rope
     from .swiglu import swiglu
@@ -30,6 +32,7 @@ else:
 __all__ = [
     "HAVE_TRITON",
     "DecodeAttention",
+    "pick_matmul",
     "add_rms_norm",
     "kv_norm_rope_to_cache",
     "q_norm_rope",
