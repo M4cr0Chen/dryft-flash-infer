@@ -200,3 +200,51 @@ def test_fallback_is_intact(model_path):
     assert list(engine._native_generate(prompts, 4)) == _native_tokens(
         model_path, prompts, 4
     )
+
+
+def test_speculation_is_exact(model_path, monkeypatch):
+    """Speculative decoding must emit the identical greedy stream."""
+    import engine as engine_module
+
+    monkeypatch.setattr(engine_module, "DRAFT", 4)
+    monkeypatch.setattr(engine_module, "DRAFT_TARGET", 99.0)  # never governed
+    prompts = _prompts(1, 24, seed=31)
+    expected = _native_tokens(model_path, prompts, 12)
+
+    engine = Engine(model_path)
+    got = list(engine.generate(prompts, 12))
+    # draft is chosen per shape in _ensure, so it is only meaningful after a call
+    assert engine.draft == 4, "speculation should be live at batch 1"
+    assert len(got) == 12
+    assert got == expected
+    assert engine.drafter.passes < 12, "no pass ever emitted more than one token"
+
+
+def test_speculation_accepts_a_repeated_prompt(model_path, monkeypatch):
+    """A prompt built from a repeated phrase should make the drafter land."""
+    import engine as engine_module
+    from kernels.ngram import NgramDrafter
+
+    monkeypatch.setattr(engine_module, "DRAFT", 6)
+    monkeypatch.setattr(engine_module, "DRAFT_TARGET", 99.0)
+    phrase = [11, 22, 33, 44, 55, 66]
+    prompts = [(phrase * 8)[:40]]
+    expected = _native_tokens(model_path, prompts, 10)
+
+    engine = Engine(model_path)
+    got = list(engine.generate(prompts, 10))
+    assert got == expected
+    assert engine.drafter.rate > 1.0, "drafter never landed on a repetitive prompt"
+
+
+def test_governor_holds_the_rate_down():
+    """The governor must stop proposing once the running rate hits target."""
+    from kernels.ngram import NgramDrafter
+
+    drafter = NgramDrafter(order=2, draft=8, target=1.25)
+    phrase = list(range(50)) * 4
+    drafter.reset(phrase)
+    for _ in range(40):
+        proposal = drafter.propose()
+        drafter.commit([phrase[0]] * (len(proposal) + 1) if proposal else [phrase[0]])
+    assert drafter.rate <= 1.35, f"governor let the rate reach {drafter.rate}"

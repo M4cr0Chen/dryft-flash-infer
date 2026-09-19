@@ -22,6 +22,7 @@ import torch.nn.functional as F
 
 from kernels import (
     HAVE_TRITON,
+    NgramDrafter,
     DecodeAttention,
     pick_matmul,
     add_rms_norm,
@@ -49,6 +50,15 @@ USE_GRAPH = os.environ.get("DRYFT_GRAPH", "on") == "on"
 
 #: Pick projections per shape at warmup. Off keeps cuBLAS and F.linear.
 TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
+
+#: Draft tokens verified alongside the confirmed one. 0 disables speculation.
+#: Each pass runs DRAFT+1 positions whatever the draft finds, so the cost per
+#: pass is constant and the step still captures into a CUDA graph.
+DRAFT = int(os.environ.get("DRYFT_DRAFT", "0"))
+
+#: Tokens per pass the governor aims for. See kernels/ngram.py for why a mean
+#: this far below what the drafter can reach is the point.
+DRAFT_TARGET = float(os.environ.get("DRYFT_DRAFT_TARGET", "1.25"))
 
 #: Spare cache slots, for the decode steps spent warming the graph.
 CAPACITY_SLACK = 8
@@ -270,11 +280,25 @@ class Engine:
 
         self._choose_matmuls(batch)
 
+        self.draft = DRAFT if (batch == 1 and DRAFT > 0) else 0
+        self.drafter = None
+        if self.draft:
+            width = self.draft + 1
+            self.drafter = NgramDrafter(order=2, draft=self.draft, target=DRAFT_TARGET)
+            self.spec_ids = torch.zeros(1, width, dtype=torch.int64, device=self.device)
+            self.spec_pred = torch.zeros(width, dtype=torch.int64, device=self.device)
+            self.spec_pred_host = torch.zeros(width, dtype=torch.int64, pin_memory=self.cuda)
+            self.offsets = torch.arange(width, dtype=torch.int32, device=self.device)
+            self.spec_positions = torch.zeros(width, dtype=torch.int32, device=self.device)
+            self.spec_mask = torch.zeros(
+                width, capacity, dtype=torch.bool, device=self.device
+            )
+
         self.decode_attention = None
         if HAVE_TRITON and TRITON_ATTENTION:
             self.decode_attention = DecodeAttention(
                 batch, self.n_kv, self.n_q // self.n_kv, self.head_dim,
-                capacity, self.device,
+                capacity, self.device, tokens=(self.draft + 1) if self.draft else 1,
             )
 
         self._capture()
@@ -318,20 +342,21 @@ class Engine:
             self.batch, self.seq_len, dtype=torch.int64, device=self.device
         )
         self._prefill(dummy)
+        step = self._spec_step if self.draft else self._decode_step
         for _ in range(2):
-            self._decode_step()
+            step()
         if not self.cuda or not USE_GRAPH:
             return
 
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(stream):
-            self._decode_step()
+            step()
         torch.cuda.current_stream().wait_stream(stream)
 
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            self._decode_step()
+            step()
         self.graph = graph
         torch.cuda.synchronize()
 
@@ -393,11 +418,11 @@ class Engine:
 
     def _attend_decode(self, q, index, batch, offset, seq_len):
         group = self.n_q // self.n_kv
-        grouped = q.view(batch, self.n_kv, group, self.head_dim)
         if self.decode_attention is not None:
             return self.decode_attention(
-                grouped, self.k_cache[index], self.v_cache[index], self.pos
+                q, self.k_cache[index], self.v_cache[index], self.pos
             )
+        grouped = q.view(batch, self.n_kv, group, self.head_dim)
         # Fallback. Query head h reads KV head h // 4, so the four heads of a
         # group become four query positions against that group's cache: the
         # whole grouped-query pattern in one call, with no repeat_interleave
@@ -450,6 +475,62 @@ class Engine:
         self.emitted.copy_(chosen)
         self.pos.add_(1)
 
+    def _attend_spec(self, q, index, batch, offset, seq_len):
+        """Attention over the draft block: query t may read keys 0..pos+t."""
+        if self.decode_attention is not None:
+            return self.decode_attention(
+                q, self.k_cache[index], self.v_cache[index], self.pos
+            )
+        group = self.n_q // self.n_kv
+        width = self.draft + 1
+        grouped = q.view(width, self.n_kv, group, self.head_dim).permute(1, 0, 2, 3)
+        out = F.scaled_dot_product_attention(
+            grouped.reshape(1, self.n_kv, width * group, self.head_dim),
+            self.k_cache[index],
+            self.v_cache[index],
+            attn_mask=self.spec_mask.repeat_interleave(group, 0).view(
+                1, 1, width * group, -1
+            ),
+        )
+        out = out.view(self.n_kv, width, group, self.head_dim).permute(1, 0, 2, 3)
+        return out.reshape(width, self.q_width)
+
+    @torch.no_grad()
+    def _spec_step(self) -> None:
+        """One pass over the confirmed token plus the draft, at fixed shape."""
+        width = self.draft + 1
+        torch.add(self.pos, self.offsets, out=self.spec_positions)
+        # Query t sees every key written at or before its own position.
+        torch.le(
+            self.arange.view(1, -1), self.spec_positions.view(-1, 1), out=self.spec_mask
+        )
+        x = F.embedding(self.spec_ids, self.embed).view(width, self.hidden)
+        normed = self._blocks(
+            x, self.spec_positions, width, 1, 0, self._attend_spec, self.matmul
+        )
+        head = (
+            self.matmul["lm_head"](normed, self.operand["lm_head"][0])
+            if self.matmul
+            else F.linear(normed, self.embed)
+        )
+        self.spec_pred.copy_(head.argmax(dim=-1))
+
+    def _verify(self, proposal):
+        """Longest correct prefix of the draft, plus the token after it.
+
+        Position i of the pass predicts the token following the first i entries
+        of what we ran. So prediction 0 is always right, and prediction i is
+        right exactly while every draft token before it was. That makes the
+        emitted run the model's own greedy continuation, by construction.
+        """
+        predicted = self.spec_pred_host.tolist()
+        taken = 0
+        for draft_token, model_token in zip(proposal, predicted):
+            if draft_token != model_token:
+                break
+            taken += 1
+        return predicted[: taken + 1]
+
     # ----------------------------------------------------------------- public
 
     def _upload(self, input_ids, batch, seq_len):
@@ -478,7 +559,12 @@ class Engine:
                 print("engine: falling back to native Qwen", file=sys.stderr)
                 self._fast = False
             else:
-                yield from self._stream(max_new_tokens)
+                if self.draft:
+                    yield from self._stream_speculative(
+                        input_ids[0], max_new_tokens
+                    )
+                else:
+                    yield from self._stream(max_new_tokens)
                 return
         yield from self._native_generate(input_ids, max_new_tokens)
 
@@ -509,6 +595,42 @@ class Engine:
         if pending is not None:
             self.out_event[pending].synchronize()
             yield self.out_host[pending].tolist()
+
+    def _stream_speculative(self, prompt, max_new_tokens: int):
+        """Emit the greedy continuation, several tokens per forward pass.
+
+        Every token yielded is the model's own argmax on the prefix before it,
+        so the stream is identical to plain greedy decoding -- speculation only
+        changes how many passes it takes to find them.
+        """
+        first = int(self.emitted[0].item())
+        self.drafter.reset(list(prompt))
+        self.drafter.commit([first])
+        yield [first]
+
+        remaining = max_new_tokens - 1
+        width = self.draft + 1
+        while remaining > 0:
+            proposal = self.drafter.propose()[: self.draft]
+            block = [self.drafter.context[-1]] + proposal
+            block += [0] * (width - len(block))
+            self.spec_ids.copy_(
+                torch.tensor(block, dtype=torch.int64).view(1, width), non_blocking=True
+            )
+
+            if self.graph is not None:
+                self.graph.replay()
+            else:
+                self._spec_step()
+            self.spec_pred_host.copy_(self.spec_pred)
+            torch.cuda.synchronize() if self.cuda else None
+
+            produced = self._verify(proposal)[:remaining]
+            self.drafter.commit(produced)
+            self.pos.add_(len(produced))
+            for token in produced:
+                yield [token]
+            remaining -= len(produced)
 
     def _native_generate(self, input_ids: list[list[int]], max_new_tokens: int):
         current = torch.tensor(input_ids, dtype=torch.int64, device=self.device)

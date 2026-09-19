@@ -44,6 +44,15 @@ image = (
         "huggingface_hub[hf_transfer]",
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    # Natural English, for estimating n-gram acceptance. The judge draws its
+    # prompts from a fixed corpus; random token ids have no structure at all
+    # and would say speculation is worthless when it is not.
+    .run_commands(
+        "python -c \"import urllib.request as u; "
+        "open('/root/corpus.txt','wb').write("
+        "u.urlopen('https://www.gutenberg.org/cache/epub/1342/pg1342.txt',"
+        "timeout=60).read())\" || echo unavailable > /root/corpus.txt"
+    )
     .add_local_dir("engine", "/root/engine")
     .add_local_file("bench/harness.py", "/root/harness.py")
 )
@@ -70,7 +79,8 @@ def fetch():
 @app.function(
     image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
 )
-def benchmark(shapes=None, samples: int = 5, detune: str = ""):
+def benchmark(shapes=None, samples: int = 5, detune: str = "",
+              draft: int = 0, target: float = 1.25, corpus: bool = False):
     """Time and check the engine the way the judge would.
 
     ``detune`` switches off stages by name (``graph``, ``triton``, ``matmul``)
@@ -80,15 +90,23 @@ def benchmark(shapes=None, samples: int = 5, detune: str = ""):
     import os
     import sys
 
+    if draft:
+        os.environ["DRYFT_DRAFT"] = str(draft)
+        os.environ["DRYFT_DRAFT_TARGET"] = str(target)
     for stage in filter(None, detune.split(",")):
         os.environ[{"graph": "DRYFT_GRAPH", "triton": "DRYFT_ATTENTION",
                     "matmul": "DRYFT_MATMUL"}[stage]] = "off"
     if detune:
         print(f"detuned: {detune}", flush=True)
     sys.path.insert(0, "/root")
+    import harness
     from harness import run
 
     _describe_gpu()
+    if corpus:
+        harness.load_corpus("/root/corpus.txt", WEIGHTS)
+    if draft:
+        print(f"speculation: draft={draft} target={target}", flush=True)
     return run(WEIGHTS, shapes=shapes, samples=samples)
 
 
@@ -115,6 +133,12 @@ def _describe_gpu():
         f"{prop.multi_processor_count} SMs  torch {torch.__version__}",
         flush=True,
     )
+    # Modal substitutes an H200 when no H100 is free. It has 4.8 TB/s against
+    # the H100's 3.35, so any timing taken on one is not comparable to the
+    # benchmark's hardware. Token statistics are unaffected.
+    if "H100" not in prop.name:
+        print(f"WARNING: {prop.name} is not the benchmark's H100 -- "
+              f"timings from this run are not comparable", flush=True)
 
 
 @app.function(
@@ -177,8 +201,10 @@ def shell():
 
 
 @app.local_entrypoint()
-def main(samples: int = 5, detune: str = ""):
-    benchmark.remote(samples=samples, detune=detune)
+def main(samples: int = 5, detune: str = "", draft: int = 0,
+         target: float = 1.25, corpus: bool = False):
+    benchmark.remote(samples=samples, detune=detune, draft=draft,
+                     target=target, corpus=corpus)
 
 
 @app.function(
@@ -445,3 +471,133 @@ def layout():
             print(f"  {name:8s} [{n},{k}]  {line}   -> {winner}", flush=True)
             del w, wt
             torch.cuda.empty_cache()
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def trace_prefill(batch: int = 16, context: int = 512):
+    """Where prefill's milliseconds go. TTFT ratio says this half is neglected."""
+    import sys
+    import time
+    from collections import defaultdict
+
+    import torch
+    from torch.profiler import ProfilerActivity, profile
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    from engine import Engine
+    from harness import _prompts
+
+    _describe_gpu()
+    engine = Engine(WEIGHTS)
+    vocab = engine.embed.shape[0]
+    list(engine.generate(_prompts(batch, context, vocab, 0), 4))
+    ids = engine._upload(_prompts(batch, context, vocab, 1), batch, context)
+
+    for _ in range(3):
+        engine._prefill(ids)
+    torch.cuda.synchronize()
+    reps = 10
+    start = time.perf_counter()
+    for _ in range(reps):
+        engine._prefill(ids)
+    torch.cuda.synchronize()
+    wall = (time.perf_counter() - start) / reps
+
+    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        for _ in range(reps):
+            engine._prefill(ids)
+        torch.cuda.synchronize()
+
+    totals, counts = defaultdict(float), defaultdict(int)
+    for e in prof.key_averages():
+        if e.self_device_time_total > 0:
+            totals[e.key] += e.self_device_time_total
+            counts[e.key] += e.count
+    grand = sum(totals.values()) / reps
+
+    tokens = batch * context
+    flops = 2 * 3.633e9 * tokens
+    print(f"\nprefill b{batch} x {context} = {tokens} tokens")
+    print(f"  wall {wall * 1e3:.2f} ms   kernels {grand / 1e3:.2f} ms"
+          f"   gap {wall * 1e3 - grand / 1e3:.2f} ms")
+    print(f"  dense GEMM work {flops / 1e12:.1f} TFLOP -> {flops / wall / 1e12:.0f} TFLOPS"
+          f"  ({flops / wall / 989e12 * 100:.0f}% of peak)")
+    print(f"  {'kernel':50s} {'calls':>6s} {'us':>9s} {'share':>6s}")
+    for key in sorted(totals, key=totals.get, reverse=True)[:12]:
+        per = totals[key] / reps
+        print(f"  {key[:50]:50s} {counts[key] // reps:6d} {per:9.1f} {per / grand * 100:5.1f}%")
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def accept_study(prompt_len: int = 512, steps: int = 192, prompts: int = 6):
+    """How many tokens would an n-gram draft get right, on real text?
+
+    No kernels: generate greedily, then replay the sequence asking what a
+    prompt-lookup draft would have proposed at each step. Mean accepted length
+    per step is the whole speculation payoff, so measure it before building it.
+    """
+    import sys
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    from engine import Engine
+    from transformers import AutoTokenizer
+
+    _describe_gpu()
+    text = open("/root/corpus.txt", encoding="utf-8", errors="ignore").read()
+    if len(text) < 10000:
+        print("corpus unavailable; aborting")
+        return
+    tokenizer = AutoTokenizer.from_pretrained(WEIGHTS)
+    ids = tokenizer(text, return_tensors=None)["input_ids"]
+    print(f"corpus: {len(text)} chars -> {len(ids)} tokens", flush=True)
+
+    engine = Engine(WEIGHTS)
+
+    sequences = []
+    for index in range(prompts):
+        start = 2000 + index * 4000
+        prompt = ids[start : start + prompt_len]
+        out = [row[0] for row in engine.generate([prompt], steps)]
+        sequences.append((prompt, out))
+        print(f"  prompt {index}: generated {len(out)} tokens", flush=True)
+
+    def simulate(prompt, generated, order, draft, use_generated=True):
+        """Mean tokens emitted per forward pass under an n-gram draft."""
+        context = list(prompt)
+        pos, passes, produced = 0, 0, 0
+        while pos < len(generated):
+            key = tuple(context[-order:])
+            proposal = []
+            haystack = context if use_generated else list(prompt)
+            for j in range(len(haystack) - order - 1, -1, -1):
+                if tuple(haystack[j : j + order]) == key:
+                    proposal = haystack[j + order : j + order + draft]
+                    break
+            taken = 0
+            for a, b in zip(proposal, generated[pos:]):
+                if a != b:
+                    break
+                taken += 1
+            emitted = taken + 1  # the model's own token always lands
+            emitted = min(emitted, len(generated) - pos)
+            context.extend(generated[pos : pos + emitted])
+            pos += emitted
+            produced += emitted
+            passes += 1
+        return produced / passes
+
+    print("\nmean tokens per forward pass (1.00 = no speculation)")
+    print(f"  {'order':>5} {'draft':>5} {'alpha':>7} {'vs now':>8}")
+    for order in (2, 3, 4):
+        for draft in (2, 4, 8):
+            alphas = [simulate(p, g, order, draft) for p, g in sequences]
+            mean = sum(alphas) / len(alphas)
+            lo, hi = min(alphas), max(alphas)
+            print(f"  {order:5d} {draft:5d} {mean:7.3f} {mean:7.2f}x"
+                  f"   per-prompt {lo:.2f}-{hi:.2f}", flush=True)

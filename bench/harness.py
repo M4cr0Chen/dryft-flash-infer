@@ -28,10 +28,37 @@ PUBLIC_SHAPES = [
 ]
 
 
+CORPUS = None
+
+
 def _prompts(batch, length, vocab, seed):
-    """Prompt ids the engine has never seen, fresh per sample like the judge's."""
+    """Prompt ids the engine has never seen, fresh per sample like the judge's.
+
+    Random ids carry no n-gram structure, which is fine for timing a plain
+    decode loop and useless for judging speculation. When a corpus is loaded,
+    draw real slices of it instead -- the judge derives its prompts from a
+    fixed corpus, so acceptance and its variance only mean anything here.
+    """
     generator = torch.Generator().manual_seed(seed)
-    return torch.randint(0, vocab, (batch, length), generator=generator).tolist()
+    if CORPUS is None:
+        return torch.randint(0, vocab, (batch, length), generator=generator).tolist()
+    starts = torch.randint(
+        0, len(CORPUS) - length - 1, (batch,), generator=generator
+    ).tolist()
+    return [CORPUS[at : at + length] for at in starts]
+
+
+def load_corpus(path, model_path):
+    """Tokenise a text file once, for realistic prompts."""
+    global CORPUS
+    from transformers import AutoTokenizer
+
+    text = open(path, encoding="utf-8", errors="ignore").read()
+    if len(text) < 10000:
+        print("corpus unavailable; keeping random prompts", flush=True)
+        return
+    CORPUS = AutoTokenizer.from_pretrained(model_path)(text)["input_ids"]
+    print(f"corpus: {len(CORPUS)} tokens", flush=True)
 
 
 def _time_stream(generate, prompts, steps):

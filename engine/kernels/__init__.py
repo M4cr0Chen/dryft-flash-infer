@@ -6,6 +6,8 @@ not a shipping path. It is loud about itself for the same reason.
 
 import sys
 
+from .ngram import NgramDrafter
+
 try:
     import triton  # noqa: F401
 except Exception:  # pragma: no cover - the container always has Triton
@@ -31,6 +33,7 @@ else:
 
 __all__ = [
     "HAVE_TRITON",
+    "NgramDrafter",
     "DecodeAttention",
     "pick_matmul",
     "add_rms_norm",
