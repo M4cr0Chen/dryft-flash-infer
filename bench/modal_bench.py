@@ -55,6 +55,7 @@ image = (
     )
     .add_local_dir("engine", "/root/engine")
     .add_local_file("bench/harness.py", "/root/harness.py")
+    .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
 )
 
 weights = modal.Volume.from_name("dryft-qwen3-4b", create_if_missing=True)
@@ -601,3 +602,311 @@ def accept_study(prompt_len: int = 512, steps: int = 192, prompts: int = 6):
             lo, hi = min(alphas), max(alphas)
             print(f"  {order:5d} {draft:5d} {mean:7.3f} {mean:7.2f}x"
                   f"   per-prompt {lo:.2f}-{hi:.2f}", flush=True)
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def quant_probe(prompt_len: int = 512, prompts: int = 4):
+    """Would FP8 weights survive the judge's tie-margin replay?
+
+    No kernels and no speedup: quantise the projections, dequantise straight
+    back to bfloat16, and run the same forward. That isolates the accuracy cost
+    of the format from every implementation question. The number that matters
+    is the worst tie gap -- how far below the true argmax our token would sit.
+    """
+    import sys
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    from engine import Engine
+    from transformers import AutoTokenizer
+
+    _describe_gpu()
+    text = open("/root/corpus.txt", encoding="utf-8", errors="ignore").read()
+    tokenizer = AutoTokenizer.from_pretrained(WEIGHTS)
+    corpus = tokenizer(text)["input_ids"]
+
+    engine = Engine(WEIGHTS)
+    engine._ensure(1, prompt_len, 8)
+
+    def logits_for(ids):
+        with torch.no_grad():
+            hidden = F.embedding(ids, engine.embed)
+            normed = engine._blocks(
+                hidden.view(prompt_len, engine.hidden), engine.arange[:prompt_len],
+                prompt_len, 1, 0, engine._attend_prefill,
+            )
+            return F.linear(normed, engine.embed).float()
+
+    batches = []
+    for index in range(prompts):
+        at = 5000 + index * 9000
+        ids = torch.tensor(
+            [corpus[at : at + prompt_len]], dtype=torch.int64, device="cuda"
+        )
+        batches.append((ids, logits_for(ids)))
+    print(f"reference logits: {prompts} x {prompt_len} positions", flush=True)
+
+    def quantise(w, dtype, group=0):
+        """Round-trip through the format. group=0 is per output channel."""
+        limit = 127.0 if dtype == torch.int8 else torch.finfo(dtype).max
+        out, inner = w.shape
+        if group and inner % group == 0:
+            tile = w.view(out, inner // group, group)
+            scale = (tile.abs().amax(dim=2, keepdim=True) / limit).clamp(min=1e-12)
+            back = (tile / scale).clamp(-limit, limit).to(dtype).to(w.dtype) * scale
+            return back.view(out, inner).to(w.dtype)
+        scale = (w.abs().amax(dim=1, keepdim=True) / limit).clamp(min=1e-12)
+        return ((w / scale).clamp(-limit, limit).to(dtype).to(w.dtype) * scale).to(w.dtype)
+
+    originals = [
+        (layer, name, getattr(layer, name).clone())
+        for layer in engine.layers
+        for name in ("qkv", "o", "gate_up", "down")
+    ]
+
+    F8 = torch.float8_e4m3fn
+    plans = [
+        ("fp8 per-channel   all",      F8, 0,   ("qkv", "o", "gate_up", "down")),
+        ("fp8 group-128     all",      F8, 128, ("qkv", "o", "gate_up", "down")),
+        ("fp8 group-64      all",      F8, 64,  ("qkv", "o", "gate_up", "down")),
+        ("fp8 group-32      all",      F8, 32,  ("qkv", "o", "gate_up", "down")),
+        ("fp8 group-128 mlp only",     F8, 128, ("gate_up", "down")),
+        ("fp8 group-64  mlp only",     F8, 64,  ("gate_up", "down")),
+        ("int8 group-128    all", torch.int8, 128, ("qkv", "o", "gate_up", "down")),
+    ]
+    saved = {"qkv": 1.134, "o": 0.755, "gate_up": 3.586, "down": 1.793}
+    for label, dtype, group, targets in plans:
+        for layer, name, original in originals:
+            setattr(layer, name,
+                    quantise(original, dtype, group) if name in targets else original)
+        head = engine.embed
+        shrink = sum(saved[n] for n in targets) / 2
+
+        worst = 0.0
+        flips = total = 0
+        for ids, reference in batches:
+            mine = logits_for(ids)
+            chosen = mine.argmax(dim=-1, keepdim=True)
+            gap = reference.max(dim=-1, keepdim=True).values - reference.gather(1, chosen)
+            worst = max(worst, gap.max().item())
+            flips += (chosen[:, 0] != reference.argmax(dim=-1)).sum().item()
+            total += chosen.shape[0]
+        engine.embed = head
+        speed = 8.045 / (8.045 - shrink)
+        print(f"  {label:24s} gap {worst:6.3f}  flips {flips:5d}/{total}"
+              f"  bytes -{shrink:.2f} GB  decode x{speed:.2f}", flush=True)
+
+    for layer, name, original in originals:
+        setattr(layer, name, original)
+    print("  (weights restored)", flush=True)
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def utilisation(batch: int = 1, context: int = 512, seconds: int = 8):
+    """Is the GPU saturated, starved, or throttled while we decode?
+
+    Utilisation percentages alone are misleading -- "100% GPU" only means a
+    kernel was resident, not that it was moving bytes. So sample the memory
+    controller and the clocks too, and put the achieved bandwidth next to them.
+    """
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    import torch
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    from engine import Engine
+    from harness import _prompts
+
+    _describe_gpu()
+    engine = Engine(WEIGHTS)
+    list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 8))
+
+    fields = ("utilization.gpu,utilization.memory,clocks.sm,clocks.mem,"
+              "power.draw,temperature.gpu,clocks_throttle_reasons.active")
+    samples = []
+    stop = threading.Event()
+
+    def sample():
+        while not stop.is_set():
+            out = subprocess.run(
+                ["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            if out:
+                samples.append(out.split(", "))
+            time.sleep(0.05)
+
+    watcher = threading.Thread(target=sample, daemon=True)
+    watcher.start()
+
+    torch.cuda.synchronize()
+    start = time.perf_counter()
+    replays = 0
+    while time.perf_counter() - start < seconds:
+        for _ in range(200):
+            engine.graph.replay()
+        replays += 200
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - start
+    stop.set()
+    watcher.join(timeout=2)
+
+    step = elapsed / replays
+    moved = 8.045e9 + batch * (context + 8) * 147456
+    print(f"\n{replays} decode steps in {elapsed:.2f}s -> {step * 1e6:.0f} us/step")
+    print(f"  achieved {moved / step / 1e12:.2f} TB/s of 3.35 peak "
+          f"({moved / step / 3.35e12 * 100:.0f}%)")
+
+    if samples:
+        def column(i, cast=float):
+            values = []
+            for row in samples:
+                try:
+                    values.append(cast(row[i]))
+                except (ValueError, IndexError):
+                    pass
+            return values
+
+        for index, (name, unit) in enumerate([
+            ("sm utilisation", "%"), ("memory controller", "%"),
+            ("sm clock", "MHz"), ("memory clock", "MHz"),
+            ("power", "W"), ("temperature", "C"),
+        ]):
+            values = column(index)
+            if values:
+                print(f"  {name:20s} mean {sum(values) / len(values):7.1f} "
+                      f"max {max(values):7.1f} {unit}")
+        throttle = {row[6] for row in samples if len(row) > 6}
+        print(f"  throttle reasons     {throttle}")
+        print(f"  ({len(samples)} samples)")
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def fp8_probe():
+    """Correctness and speed of the FP8 GEMV against cuBLAS, per shape."""
+    import statistics
+    import sys
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from kernels import fp8
+
+    def clock(fn, operands, reps=3, trials=5):
+        for w in operands[:4]:
+            fn(w)
+        runs = []
+        for _ in range(trials):
+            torch.cuda.synchronize()
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                for w in operands:
+                    fn(w)
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / (reps * len(operands)))
+        return statistics.median(runs)
+
+    for name, n, k in [("qkv", 6144, 2560), ("o", 2560, 4096),
+                       ("gate_up", 19456, 2560), ("down", 2560, 9728)]:
+        every = [torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
+                 for _ in range(8)]
+        x = torch.randn(1, k, dtype=torch.bfloat16, device="cuda")
+        try:
+            packed = [fp8.quantize(w) for w in every]
+        except Exception as exc:
+            print(f"  {name:8s} quantize failed: {type(exc).__name__}: {exc}")
+            continue
+
+        reference = F.linear(x, every[0])
+        try:
+            mine = fp8.fp8_matmul(x, packed[0])
+        except Exception as exc:
+            print(f"  {name:8s} kernel failed: {type(exc).__name__}: {exc}"[:200])
+            continue
+        scale = reference.float().abs().max().item()
+        err = (mine.float() - reference.float()).abs().max().item()
+
+        bf16_ms = clock(lambda w: F.linear(x, w), every)
+        fp8_ms = clock(lambda p: fp8.fp8_matmul(x, p), packed)
+        bf16_bytes = every[0].numel() * 2
+        fp8_bytes = fp8.bytes_moved(packed[0])
+        print(f"  {name:8s} rel_err {err / scale:8.5f}   "
+              f"bf16 {bf16_ms * 1e3:6.1f}us {bf16_bytes / (bf16_ms * 1e-3) / 1e12:.2f}TB/s   "
+              f"fp8 {fp8_ms * 1e3:6.1f}us {fp8_bytes / (fp8_ms * 1e-3) / 1e12:.2f}TB/s   "
+              f"speedup {bf16_ms / fp8_ms:.2f}x", flush=True)
+        del every, packed
+        torch.cuda.empty_cache()
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def fp8_isolate():
+    """Is Triton's FP8 load slow, or is it my scale gather?"""
+    import statistics
+    import sys
+
+    import torch
+    import triton
+    import triton.language as tl
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+
+    from probe_kernels import drain as _drain
+
+    def clock(fn, reps=20):
+        for _ in range(5):
+            fn()
+        torch.cuda.synchronize()
+        runs = []
+        for _ in range(5):
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                fn()
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / reps)
+        return statistics.median(runs)
+
+    n, k = 19456, 2560
+    src = (torch.randn(n, k, device="cuda") * 0.02)
+    out = torch.empty(n, dtype=torch.float32, device="cuda")
+    print(f"  pure streaming read of a [{n},{k}] weight, no scales, no activation")
+    for label, w in [("bf16", src.to(torch.bfloat16)),
+                     ("fp8 e4m3", src.to(torch.float8_e4m3fn)),
+                     ("int8", (src * 100).to(torch.int8))]:
+        moved = w.numel() * w.element_size()
+        for block_n, block_k, warps in [(32, 128, 4), (64, 128, 8), (128, 64, 8),
+                                        (64, 256, 8), (32, 512, 8)]:
+            try:
+                ms = clock(lambda: _drain[(triton.cdiv(n, block_n),)](
+                    w, out, k, N=n, BLOCK_N=block_n, BLOCK_K=block_k,
+                    num_warps=warps, num_stages=4))
+            except Exception as exc:
+                print(f"    {label:9s} {block_n:4d}x{block_k:4d} w{warps}  "
+                      f"failed: {type(exc).__name__}: {exc}"[:400]); continue
+            print(f"    {label:9s} {block_n:4d}x{block_k:4d} w{warps}  "
+                  f"{ms * 1e3:7.1f}us  {moved / (ms * 1e-3) / 1e12:5.2f} TB/s", flush=True)
+        del w
+        torch.cuda.empty_cache()

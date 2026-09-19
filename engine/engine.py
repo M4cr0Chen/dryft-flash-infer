@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from kernels import (
     HAVE_TRITON,
     NgramDrafter,
+    fp8,
     DecodeAttention,
     pick_matmul,
     add_rms_norm,
@@ -42,6 +43,11 @@ PREFILL_ROW_BUDGET = 32768
 #: call in fixed overhead regardless of how little cache it reads, which is 36
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
 TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
+
+#: Quantise the decode projections to FP8 with group scales. Prefill keeps
+#: bfloat16; it is compute-bound, so there is nothing to win and no reason to
+#: spend the accuracy. See kernels/fp8.py for the measured logit cost.
+USE_FP8 = os.environ.get("DRYFT_FP8", "off") == "on"
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
@@ -313,6 +319,22 @@ class Engine:
         self.operand = {}
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
+        quantised = {}
+        if USE_FP8 and fp8 is not None:
+            try:
+                for name, weights in (
+                    ("qkv", [ly.qkv for ly in self.layers]),
+                    ("o", [ly.o for ly in self.layers]),
+                    ("gate_up", [ly.gate_up for ly in self.layers]),
+                    ("down", [ly.down for ly in self.layers]),
+                ):
+                    quantised[name] = [fp8.quantize(w) for w in weights]
+                if self.cuda:
+                    torch.cuda.empty_cache()
+            except Exception:
+                traceback.print_exc()
+                quantised = {}
+
         first = self.layers[0]
         for name, sample, every in (
             ("qkv", first.qkv, [ly.qkv for ly in self.layers]),
@@ -322,16 +344,21 @@ class Engine:
             ("lm_head", self.embed, [self.embed]),
         ):
             try:
-                chosen, transpose, note = pick_matmul(batch, every)
+                chosen, transpose, note = pick_matmul(
+                    batch, every, packed=quantised.get(name)
+                )
             except Exception:
                 chosen, transpose, note = F.linear, False, "cublas (selection failed)"
             self.matmul[name] = chosen
             # A transposed layout is a second copy of the weight. Worth it for
             # the projections cuBLAS reads better that way; prefill keeps the
             # original, where the shape is wide enough not to care.
-            self.operand[name] = (
-                [w.t().contiguous() for w in every] if transpose else every
-            )
+            if transpose == "fp8":
+                self.operand[name] = quantised[name]
+            elif transpose:
+                self.operand[name] = [w.t().contiguous() for w in every]
+            else:
+                self.operand[name] = every
             print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
         if self.cuda:
             torch.cuda.empty_cache()

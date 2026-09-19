@@ -129,7 +129,7 @@ def _mm(x, weight):
     return torch.mm(x, weight)
 
 
-def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5):
+def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None):
     """Choose how to run this projection shape during decode.
 
     ``every`` is the weight from every layer. The measurement cycles through
@@ -185,6 +185,17 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5):
     del transposed
     torch.cuda.empty_cache()
 
+    if packed is not None:
+        from .fp8 import fp8_matmul
+
+        try:
+            if agrees(fp8_matmul(x, packed[0])):
+                elapsed = clock(fp8_matmul, packed)
+                if elapsed < best[2]:
+                    best = (fp8_matmul, "fp8", elapsed)
+        except Exception as exc:
+            print(f"  fp8 unavailable: {type(exc).__name__}: {exc}"[:200])
+
     for config in _CONFIGS:
         candidate = functools.partial(skinny_matmul, config=config)
         try:
@@ -200,5 +211,13 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5):
     fn, transpose, elapsed = best
     if fn is not F.linear and elapsed > incumbent * 0.97:
         fn, transpose, elapsed = F.linear, False, incumbent
+    if transpose == "fp8":
+        from .fp8 import bytes_moved
+
+        real = bytes_moved(packed[0])
+        return fn, "fp8", (
+            f"fp8 {real / (elapsed * 1e-3) / 1e12:.2f} TB/s"
+            f" ({moved / (elapsed * 1e-3) / 1e12:.2f} effective)"
+        )
     kind = "cublas" if fn is F.linear else ("cublas-t" if transpose else "triton")
     return fn, transpose, f"{kind} {moved / (elapsed * 1e-3) / 1e12:.2f} TB/s"
