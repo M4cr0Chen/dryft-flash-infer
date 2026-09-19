@@ -40,15 +40,15 @@ PREFILL_ROW_BUDGET = 32768
 #: Decode attention: the split Triton kernel, or SDPA. SDPA costs about 20 us a
 #: call in fixed overhead regardless of how little cache it reads, which is 36
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
-TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "sdpa") == "triton"
+TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
 #: step pays Python dispatch again.
-USE_GRAPH = os.environ.get("DRYFT_GRAPH", "off") == "on"
+USE_GRAPH = os.environ.get("DRYFT_GRAPH", "on") == "on"
 
 #: Pick projections per shape at warmup. Off keeps cuBLAS and F.linear.
-TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "off") == "tune"
+TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
 
 #: Spare cache slots, for the decode steps spent warming the graph.
 CAPACITY_SLACK = 8
