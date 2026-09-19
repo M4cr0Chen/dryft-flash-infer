@@ -1,5 +1,12 @@
 # Engine log
 
+## Baseline run
+
+Submitted the unmodified starter to put a starting throughput on record, as the
+quickstart asks. A push is only picked up when auto-run is on; with it off the
+delivery is accepted and then *ignored*, and no submission is created at all,
+whatever the docs say about submitting on push.
+
 Not submitted. One entry per change, with what it measured.
 
 ## Roofline (H100 SXM, 3.35 TB/s, 989 TFLOPS BF16)
