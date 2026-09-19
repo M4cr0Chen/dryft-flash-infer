@@ -1,180 +1,189 @@
 # Engine log
 
-Not submitted. One entry per change, with what it measured.
+Not submitted. What was measured, what it cost, and what it bought.
 
-## Roofline (H100 SXM, 3.35 TB/s, 989 TFLOPS BF16)
+## Where it stands
 
-Weights streamed per forward pass: 3.633 B non-embedding + 0.389 B tied LM head
+**Ranked: 919.67 tok/s** on the six hidden workloads. Leaderboard top was 1130.6.
+
+Three submissions of progressively faster engines scored 915.87, 919.67 and
+906.98. That is not a ranking of the engines; see the next section.
+
+## The measurement lesson, first, because it governs everything else
+
+**Run-to-run variance is comparable to every improvement made here.** The
+native reference is identical code on every run and measured 37.5, 39.0, 44.2,
+46.1, 47.4 and 57.1 tok/s on the same shape across the day. Platform scores
+moved ±3% on engines that only got faster.
+
+So the geometric mean of a single run cannot resolve a 3-5% change, and several
+conclusions drawn from it during the day were wrong in both directions.
+
+What *is* reliable:
+
+- **Traced step time** (`modal_bench.py::trace`), same method every time.
+- **Ratios inside one run** -- latency gates, or a candidate against cuBLAS in
+  the same warmup race.
+- **Per-kernel GPU time** from the profiler.
+
+Judge changes on those. Treat a single submission score as ±3%.
+
+## The roofline
+
+Qwen3-4B, H100 SXM: 3.35 TB/s, 989 TFLOPS BF16, 132 SMs.
+
+Weights streamed per decode pass: 3.633 B non-embedding + 0.389 B tied LM head
 = **8.045 GB**. KV per token = `2 * 8 * 128 * 2 B * 36` = **144 KiB**.
 
 ```
 decode tok/s  <=  a * B * BW / (8.045 GB + B * L * 144 KiB)
 ```
 
-`a` is mean accepted tokens per pass, 1 without speculation. At batch 1 that is
-a hard 417 tok/s: 8 GB per pass has no reuse in 50 MB of L2, so nothing but
-speculation breaks it.
+At batch 1 that is a hard 417 tok/s with no speculation: 8 GB per pass has no
+reuse in 50 MB of L2.
 
-Geometric mean over the public shapes: a strong engine reaches ~950, the
-physical ceiling is ~1170. Leaderboard top was 1095.1 on the hidden three,
-which puts it at roughly 85-88% of a non-speculative roofline.
+Measured against the absolute bound we sit at **58%**, consistently across all
+three public shapes (57 / 58 / 60%). The leaderboard top is at about 72%.
 
-Prefill share of the clock at the ceiling: 8% for `1x512->32`, **50%** for
-`4x2048->32`, 18% for `16x512->128`. Short-output workloads are prefill
-problems, not decode problems.
+## Decode step, batch 1
 
-## Measured on H100 (Modal, pinned runtime)
+```
+5.597 ms   SDPA decode attention
+4.348 ms   + Triton flash-decoding            (-22%)
+4.446 ms   re-traced after projection selection
+4.111 ms   + FP8 gate_up, CUDA GEMV, fused SwiGLU   (-8%)
+```
 
-`modal run bench/modal_bench.py` — five samples per shape, judge's own gates.
+At 4.111 ms, traced: GEMMs 3388 us (82%), small kernels 585 us, launch gap
+128 us. Effective bandwidth over the whole step is 1.96 TB/s of 3.35.
 
-| shape | native | stage 1 | + flash decode | gates |
-| --- | ---: | ---: | ---: | --- |
-| public-0  b1 x 512->32   |  37.0 |  175.6 |  **211.9** | pass |
-| public-1  b4 x 2048->32  | 118.3 |  349.6 |  **471.3** | pass |
-| public-2  b16 x 512->128 | 560.2 | 2345.9 | **2760.4** | pass |
-| **geomean** | ~157 | 524.1 | **650.8** | |
+An accidental controlled experiment: Modal sometimes substitutes an **H200**,
+which has 43% more bandwidth and returned only 30% more throughput. So roughly
+**three quarters of the step is bandwidth and one quarter fixed latency** --
+matching the traced split almost exactly.
 
-Then per-shape projection selection: **691.4** (230.9 / 491.5 / 2911.9).
+GPU diagnostics during decode: SMs 97.6% busy, **memory controller 62.3%**,
+clocks pinned at maximum, no throttling, 489 W, 49 C. The SMs are busy waiting.
 
-Spread 0.003-0.007 (gate 0.25). TTFT ratio 0.40-0.58, TPOT 0.17-0.18 (gate
-1.10) -- no latency pressure at all. Peak memory 0.18 (gate 0.90). Tie gap
-0.0000 on two shapes and 0.1250 on public-2, against a 2.0 margin; the one
-non-exact argmax is the bf16 near tie the margin exists for.
+## What worked
 
-### Where the time goes, batch 1
+| change | effect | where |
+| --- | --- | --- |
+| Custom forward, static cache, CUDA graph | 5-7x over native | `engine.py` |
+| Triton flash-decoding, split along KV | step 5.60 -> 4.35 ms | `kernels/attention.py` |
+| Per-shape kernel and layout race at warmup | +6% | `kernels/gemm.py` |
+| FP8 E4M3, group-128 scales | wins gate_up at batch 1 | `kernels/fp8.py` |
+| CUDA JIT via NVRTC, no toolkit | enables all of the below | `kernels/cuda_jit.py` |
+| Fused gate_up + SwiGLU in CUDA | 1.24x at batch 1, 1.07x at 4 | `kernels/cuda_mlp.py` |
 
-| stage | before | after |
-| --- | ---: | ---: |
-| prefill | 9.97 ms | 9.79 ms |
-| decode step | 5.537 ms | **4.348 ms** |
-| effective bandwidth | 1.45 TB/s | **1.85 TB/s** |
+The single largest find was that **SDPA costs ~20 us a call in fixed overhead**
+no matter how little cache it reads, and an explicit mask doubles it by forcing
+it off the flash backend. Thirty-six launches a step of pure latency.
 
-Prefill is already near roofline and is not the problem. Decode is: 4.35 ms
-against a 2.75 ms bandwidth floor.
+## What did not work, and why
 
-Attention was 46% of the decode step. SDPA costs ~20 us per call in fixed
-overhead no matter how little cache it reads (0.11 TB/s on 2.2 MiB), and the
-mask doubled that to 40 us by forcing the mem-efficient backend off flash.
-Thirty-six launches per step is pure latency. The split flash-decode kernel
-replaced it and took the step from 5.54 to 4.35 ms.
+Each of these is a real measurement, not an abandoned attempt.
 
-Remaining, measured per 36 layers at batch 1: `o_proj` 1.45 TB/s and
-`down_proj` 1.79 TB/s are the weak projections, against `gate_up` at 2.48 and
-`lm_head` at 2.93. Plus ~180 small elementwise launches a step.
+**A Triton GEMV for the projections.** Two rewrites, both lost to cuBLAS.
+`o_proj` moves 21 MB, which is 7 us of work at 3 TB/s against a 3-5 us kernel
+launch -- it is launch-bound, and split-K makes it worse because the reduce is
+a second launch. cuBLAS is near the practical floor for these shapes.
 
-## Stage 1 — custom forward, static cache, graphed decode
+**FP8 for bandwidth.** Accuracy is fine: group-64 scales leave the emitted
+token at worst **0.375 logits** below the true argmax against a 2.0 margin,
+less than the 0.75 the contract says native drifts from itself. But halving the
+bytes buys **1.30x, not 2x** -- streaming the same weight reaches 2.50 TB/s in
+bfloat16 and 1.63 in E4M3, because an 8-bit element carries half as much per
+memory request and the read turns latency-bound. Byte-counting overpromised.
 
-- Own forward, no `Qwen3ForCausalLM` dispatch. Fused QKV and gate/up weights,
-  built once in `__init__`.
-- Triton: RMSNorm, residual-add fused into the norm that reads it, per-head
-  norm + RoPE writing K and V straight to their cache slots, SwiGLU.
-- Preallocated `[layers, batch, kv_heads, capacity, 128]` K and V.
-- One CUDA graph over the whole decode step. Position and mask live on the
-  device so the graph needs no host input.
-- Decode attention is one SDPA call: the four query heads of a KV group become
-  four query positions, so grouped-query attention needs no `repeat_interleave`
-  copy of the cache.
-- Prompt upload through `array.array` and a pinned buffer, not
-  `torch.tensor(nested_list)`, which is ~15 ms of pure Python at 128 K ids.
-- Token stream stays one step ahead of the host: replay, enqueue the D2H, and
-  yield the *previous* step while the current one is still in flight.
+**Speculative decoding.** Exact by construction and verified token-identical.
+n-gram acceptance on real prose is a mean **1.68 tokens per pass** -- but it
+ranges **1.05 to 3.20 across prompts**, and sample time goes as its reciprocal,
+so five samples spread about 100% against a 25% gate. Governing the rate down
+to 1.25 fixes the spread and leaves less than the per-pass cost of drafting.
+Left in, off by default: `DRYFT_DRAFT=8`.
 
-### What is tested, and how
+**A megakernel QKV stage.** Correct to one bfloat16 ULP and one launch instead
+of four, using a grid barrier under cooperative launch. Slower anyway: the
+projection inside it runs at ~1 TB/s where cuBLAS gets 2.15, and 6144 output
+rows cannot hide that. Not wired in; see `kernels/cuda_qkv.py`.
 
-No local GPU, so the suite runs on CPU with torch stand-ins for the Triton
-kernels (`kernels/reference.py`, selected automatically when Triton is absent).
+**The rule these keep returning:** fusion pays exactly where the projection
+inside it is already competitive with cuBLAS, which is the large-N shapes. The
+MLP fusion won on a 19456-row weight; the QKV fusion lost on a 6144-row one.
 
-- `tests/test_numerics.py` — every fused kernel's arithmetic against the real
-  Transformers 4.51.3 modules, **bit-exact**. This is the cast-placement rule.
-- `tests/test_engine.py` — the whole engine against native Qwen: token
-  equality on four shapes, prefill logits **bit-identical**, the judge's own
-  teacher-forced replay rule, state reset between calls, batch-split prefill,
-  and that the native fallback survives the weight relayout.
-- Both suites are mutation-tested. Every mutation that is observable in
-  bfloat16 is caught; `residual * 1.001` is not, because 0% of bf16 values
-  change under it (resolution is 0.39%).
+## The toolchain, all verified on the benchmark's runtime
 
-Untested until the platform runs it: Triton codegen and CUDA graph capture.
+The container has no nvcc and no ninja, so `cpp_extension.load_inline` cannot
+run. It does have `libnvrtc` (a torch wheel dependency, so it is wherever torch
+is) and the driver. That is enough:
 
-### Safety nets
+- CUDA C++ from a Python string -> NVRTC -> PTX -> driver. **Compiles in <1 s.**
+- Driver-API launches **capture into CUDA graphs** and replay correctly.
+- **Cooperative launch with a hand-rolled grid barrier also captures**, with
+  1056 resident blocks available (8/SM x 132).
+- NVRTC has no toolkit headers, so kernel sources include nothing and carry
+  bfloat16 as `unsigned short` with two bit helpers.
 
-- `Engine.__init__` runs `_self_check`: a real generation on a small shape,
-  compared to native Qwen, applying the judge's tie-margin rule at every
-  prompt position. It prints the logit delta, the worst tie gap, and whether
-  Triton and the graph are live. On failure the engine serves native Qwen for
-  the rest of the process instead of crashing the workload.
-- **`SELF_CHECK_TOLERANCE` is a guess (1.0).** Read the delta the first run
-  prints and tighten it. A correct engine should be well under 0.1.
-- The native model is kept alive as the fallback, costing ~4.7 GiB of
-  duplicated q/k/v/gate/up. Drop it if a workload ever returns `memory_limit`.
+Quantisation and JIT CUDA were both cleared by the organiser; the written rules
+still say otherwise, so check before relying on either.
 
-## Where the decode step actually goes (traced, batch 1)
+## Gates, with the margins we actually have
 
-`modal run bench/modal_bench.py::trace`. Kernel time 4207 us, launch gap only
-239 us. **The GEMMs are 84% of the step**; every Triton kernel together is 15%.
-So the small-kernel count was never the problem, and fusing them further is not
-where the time is.
+| gate | limit | ours | headroom |
+| --- | ---: | ---: | ---: |
+| TPOT ratio | 1.10 | 0.16 | 6.9x |
+| TTFT ratio | 1.10 | 0.55 | 2.0x |
+| tie margin | 2.0 logits | 0.25 | 8x |
+| peak memory | 90% | 28% | 3.2x |
+| load budget | 300 s | 22 s | 13x |
+| **sample spread** | **0.25** | **0.15** | **1.7x** |
 
-Per projection, measured streaming all 36 layers' weights (not one in a loop --
-qkv is 31 MiB and o_proj 21 MiB, both inside a 50 MiB L2, so a tight loop
-reports L2 bandwidth and picks the wrong kernel):
+Spread is the only one that is close, and it is what made speculation
+unshippable. Note 0.15 is on a 32-token workload *without* speculation -- short
+workloads are intrinsically noisy, and that is a standing risk.
 
-| projection | GB/step | `linear [n,k]` | `mm [k,n]` | triton | taken |
-| --- | ---: | ---: | ---: | ---: | --- |
-| qkv | 1.13 | 2.08 | **2.30** | 1.57 | cublas-t |
-| o | 0.76 | 1.66 | **1.76** | 1.00 | cublas-t |
-| gate_up | 3.59 | 2.47 | 2.46 | **2.65** | triton |
-| down | 1.79 | 1.83 | **2.07** | 1.45 | cublas-t |
-| lm_head | 0.78 | 2.94 | 2.99 | **3.04** | triton |
+## Settled facts about the benchmark
 
-cuBLAS is layout-sensitive: transposing the weight to `[in, out]` and using
-`torch.mm` is worth 10-13% on three of the five. The engine races cuBLAS in
-both layouts against a swept Triton config during warmup and keeps the winner,
-requiring a 3% margin before moving off cuBLAS so a noisy measurement cannot
-make the engine slower.
+From `GET /api/v1/challenges`, against the starter docs which are stale:
 
-`o_proj` and `down_proj` are still the floor at 1.4-2.1 TB/s. Both have N=2560,
-which is only 2560 outputs to spread over 132 SMs against a long K reduction.
-Neither cuBLAS layout nor my split-K kernel cracks it. Getting those two to 2.9
-TB/s is worth about 13% of the step and is the next real target.
-
-## Done
-
-1. ~~Measure.~~ Modal H100 harness replicating the judge: `bench/harness.py`.
-2. ~~Flash-decoding attention in Triton.~~ +26% geomean.
-3. ~~Per-shape projection selection.~~ +6%.
-
-## Next, in order of expected payoff
-
-3. **`o_proj` and `down_proj`.** The last weak projections, ~13% of the step.
-   Needs a better split-K Triton kernel than mine: deeper pipelining, async
-   copies, `tl.max_contiguous` hints. Beating cuBLAS at a skinny reduction is
-   genuinely hard and my first attempt lost.
-4. ~~Fewer launches.~~ Not worth it: the trace says launch gap is 239 us of
-   4446, and all the Triton kernels together are 625 us. Dropped.
-5. **Prefill** is already near roofline; leave it.
-6. **Speculative decoding.** Last. No draft model exists in the sandbox, so it
-   is n-gram or Jacobi self-speculation. Watch the **25% spread gate**:
-   acceptance varies per prompt, and a workload that runs 1.3x on one sample
-   and 1.9x on another scores nothing. Current spread is 0.003, so there is
-   room to spend.
-
-## Settled, from `GET /api/v1/challenges`
-
-- **Six** private workloads decide the score, not three. `AGENTS.md` and
-  `QWEN_ENGINE_CONTRACT.md` both say three; they are stale.
-- **Public runs exist** and never rank: one sample per public shape.
-- The public shapes carry `regime: 1, 2, 3`. Six private workloads over three
-  regimes suggests two private shapes per public regime, which would make the
-  public three representative proxies.
+- **Six** private workloads decide the score, not three.
+- Public runs exist and never rank; public shapes carry `regime: 1, 2, 3`.
 - Budgets: 2100 GPU-seconds, 2400 run-seconds, 600 compile-seconds.
-- Hardware is **H100 80GB HBM3 SXM**, 132 SMs, 3.35 TB/s. Confirmed on Modal.
+- Hardware is H100 80GB HBM3 SXM, 132 SMs.
+- A push is picked up **only when auto-run is on**. With it off the delivery is
+  accepted and then *ignored*, and no submission is created at all. "Check
+  delivery" reports the last delivery, it does not replay it.
+- Submissions pin a commit hash, and a multi-commit push submits only the tip.
+- `POST /api/v1/submissions` is 405; the CLI's `submit` cannot work. The CLI
+  also needs `DRYFT_API=https://htn.dryft.ai` set explicitly despite the docs.
 
-## Still unknown
+## If picking this up again
 
-- `SELF_CHECK_TOLERANCE` is 1.0 and the real engine reports a 0.7500 logit
-  delta on the self-check shape. That is close. The delta is the max over every
-  prompt position against a full native forward, and the contract says native's
-  own replay drifts up to 0.75, so this is the expected floor rather than our
-  error -- the worst *tie gap*, which is what the judge grades, is 0.0000.
-  Leave the tolerance at 1.0; do not tighten it below 0.9.
+1. **Measure on the traced step, not the geomean.** Three hours were spent
+   reading ±3% noise as signal.
+2. The only untouched pool is the 585 us of small kernels plus 128 us of gap,
+   and fusion is the only thing that reaches it -- but only around projections
+   where a hand-written GEMM already matches cuBLAS.
+3. Extending FP8 and the CUDA kernels above batch 1 would apply what already
+   works to the other two thirds of the workloads. `fp8_matmul` and
+   `cuda_matmul` both raise above batch 1 today.
+4. Getting to 1130 means a GEMM that beats cuBLAS on *every* shape first.
+   Three attempts did not. That is the real blocker, not the fusion.
+
+## Reproducing
+
+```sh
+modal run bench/modal_bench.py::fetch        # once, checkpoint to a volume
+modal run bench/modal_bench.py --corpus      # judge's gates, real prompts
+modal run bench/modal_bench.py::trace        # per-kernel time in the graph
+modal run bench/modal_bench.py::utilisation  # throttling, memory controller
+modal run bench/modal_bench.py::quant_probe  # FP8 accuracy vs the tie margin
+modal run bench/modal_bench.py::accept_study # n-gram acceptance on prose
+python -m pytest tests/ -q                   # 20 tests, no GPU needed
+```
+
+The CPU tests matter: every fused kernel's arithmetic is checked bit-exactly
+against Transformers 4.51.3, and the whole engine against native Qwen, through
+torch stand-ins for the Triton kernels. They are mutation-tested -- every
+mutation observable in bfloat16 is caught.
