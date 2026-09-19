@@ -128,12 +128,13 @@ class Module:
 class Kernel:
     """One launchable kernel. Arguments are tensors and 32-bit ints."""
 
-    __slots__ = ("_handle", "name", "_shared")
+    __slots__ = ("_handle", "name", "_shared", "_keep")
 
     def __init__(self, handle, name):
         self._handle = handle
         self.name = name
         self._shared = 0
+        self._keep = None
 
     def set_shared(self, nbytes: int) -> None:
         """Opt in to more than 48 KiB of shared memory, as Hopper allows."""
@@ -144,6 +145,61 @@ class Kernel:
                 "cuFuncSetAttribute",
             )
         self._shared = nbytes
+
+    def max_blocks(self, threads: int, shared: int) -> int:
+        """Blocks that can be resident at once, which bounds a cooperative grid."""
+        import torch
+
+        count = ctypes.c_int()
+        _check(
+            _driver.cuOccupancyMaxActiveBlocksPerMultiprocessor(
+                ctypes.byref(count), self._handle,
+                ctypes.c_int(threads), ctypes.c_size_t(shared),
+            ),
+            "cuOccupancyMaxActiveBlocksPerMultiprocessor",
+        )
+        sms = torch.cuda.get_device_properties(0).multi_processor_count
+        return count.value * sms
+
+    def _pack(self, args):
+        import torch
+
+        keep, packed = [], []
+        for arg in args:
+            if isinstance(arg, torch.Tensor):
+                cell = ctypes.c_void_p(arg.data_ptr())
+            elif isinstance(arg, int):
+                cell = ctypes.c_int(arg)
+            elif isinstance(arg, float):
+                cell = ctypes.c_float(arg)
+            else:
+                raise TypeError(f"cannot pass {type(arg)} to a kernel")
+            keep.append(cell)
+            packed.append(ctypes.cast(ctypes.byref(cell), ctypes.c_void_p))
+        self._keep = keep
+        return (ctypes.c_void_p * len(packed))(*packed)
+
+    def cooperative(self, grid, block, *args):
+        """Launch so every block is resident, which makes a grid barrier safe.
+
+        Captures into a CUDA graph and replays correctly -- verified before any
+        of this was built on.
+        """
+        import torch
+
+        array = self._pack(args)
+        stream = torch.cuda.current_stream().cuda_stream
+        _check(
+            _driver.cuLaunchCooperativeKernel(
+                self._handle,
+                ctypes.c_uint(grid), ctypes.c_uint(1), ctypes.c_uint(1),
+                ctypes.c_uint(block), ctypes.c_uint(1), ctypes.c_uint(1),
+                ctypes.c_uint(self._shared),
+                ctypes.c_void_p(stream),
+                array,
+            ),
+            f"cuLaunchCooperativeKernel({self.name})",
+        )
 
     def __call__(self, grid, block, *args):
         import torch

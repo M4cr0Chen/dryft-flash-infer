@@ -56,6 +56,7 @@ image = (
     .add_local_dir("engine", "/root/engine")
     .add_local_file("bench/harness.py", "/root/harness.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
+    .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
 )
 
 weights = modal.Volume.from_name("dryft-qwen3-4b", create_if_missing=True)
@@ -1170,3 +1171,195 @@ def mlp_probe():
               f"split {split * 1e3:6.1f}us {moved / (split * 1e-3) / 1e12:.2f}TB/s  "
               f"fused {best * 1e3:6.1f}us {moved / (best * 1e-3) / 1e12:.2f}TB/s  "
               f"speedup {split / best:.2f}x  {cfg_best}", flush=True)
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def coop_probe():
+    """Cooperative launch + grid barrier, and whether a CUDA graph captures it."""
+    import ctypes
+    import sys
+
+    import torch
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from coop_probe import SOURCE
+    from kernels import cuda_jit
+
+    module = cuda_jit.Module(SOURCE)
+    kernel = module.kernel("two_phase")
+    driver = ctypes.CDLL("libcuda.so.1")
+
+    threads, n = 256, 1 << 16
+    blocks = ctypes.c_int()
+    driver.cuOccupancyMaxActiveBlocksPerMultiprocessor(
+        ctypes.byref(blocks), kernel._handle, ctypes.c_int(threads), ctypes.c_size_t(0)
+    )
+    sms = torch.cuda.get_device_properties(0).multi_processor_count
+    grid = blocks.value * sms
+    print(f"  max resident blocks: {blocks.value}/SM x {sms} SMs = {grid}")
+
+    scratch = torch.zeros(n, dtype=torch.float32, device="cuda")
+    counter = torch.zeros(2, dtype=torch.int32, device="cuda")
+
+    def launch():
+        args = [
+            ctypes.c_void_p(scratch.data_ptr()),
+            ctypes.c_void_p(counter.data_ptr()),
+            ctypes.c_void_p(counter.data_ptr() + 4),
+            ctypes.c_int(n),
+            ctypes.c_uint(grid),
+        ]
+        packed = (ctypes.c_void_p * len(args))(
+            *[ctypes.cast(ctypes.byref(a), ctypes.c_void_p) for a in args]
+        )
+        rc = driver.cuLaunchCooperativeKernel(
+            kernel._handle,
+            ctypes.c_uint(grid), ctypes.c_uint(1), ctypes.c_uint(1),
+            ctypes.c_uint(threads), ctypes.c_uint(1), ctypes.c_uint(1),
+            ctypes.c_uint(0),
+            ctypes.c_void_p(torch.cuda.current_stream().cuda_stream),
+            packed,
+        )
+        return rc
+
+    rc = launch()
+    torch.cuda.synchronize()
+    print(f"  eager cooperative launch rc={rc} -> {'OK' if rc == 0 else 'FAILED'}")
+    print(f"  scratch[0]={scratch[0].item()} (expect 2.0)")
+
+    print("  capturing into a CUDA graph...")
+    try:
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            launch()
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            rc = launch()
+        print(f"    capture rc={rc}")
+        graph.replay()
+        torch.cuda.synchronize()
+        print(f"    REPLAY OK, scratch[0]={scratch[0].item()}")
+    except Exception as exc:
+        print(f"    CAPTURE FAILED: {type(exc).__name__}: {str(exc)[:300]}")
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def qkv_probe(batch: int = 1):
+    """Fused QKV stage against the four kernels it replaces, for correctness first."""
+    import statistics
+    import sys
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from engine import Engine
+    from harness import _prompts
+    from kernels import cuda_qkv
+    from kernels.norm import rms_norm
+    from kernels.rope import kv_norm_rope_to_cache, q_norm_rope
+
+    if not cuda_qkv.ready():
+        return
+
+    engine = Engine(WEIGHTS)
+    context = 512
+    list(engine.generate(_prompts(batch, context, engine.embed.shape[0], 0), 6))
+    layer = engine.layers[0]
+    cap = engine.capacity
+    pos = engine.pos.clone()
+    x = torch.randn(batch, engine.hidden, dtype=torch.bfloat16, device="cuda") * 0.5
+
+    # Reference: the four kernels, as the engine runs them today.
+    def reference():
+        normed = rms_norm(x, layer.norm_in, engine.eps)
+        qkv = F.linear(normed, layer.qkv)
+        q = q_norm_rope(qkv, engine.n_q, layer.q_norm, engine.cos, engine.sin,
+                        pos, 1, engine.eps)
+        kv_norm_rope_to_cache(qkv, engine.q_width, engine.n_kv, layer.k_norm,
+                              engine.cos, engine.sin, pos, 1,
+                              engine.k_cache[0], engine.v_cache[0], engine.eps)
+        return q
+
+    stage = cuda_qkv.QkvStage(
+        batch, engine.hidden, engine.q_width, engine.kv_width,
+        engine.n_kv, cap, engine.eps, "cuda",
+    )
+    print(f"  cooperative grid: {stage.grid} blocks x {cuda_qkv.THREADS} threads")
+    bundle = (layer.norm_in, layer.qkv, layer.q_norm, layer.k_norm,
+              engine.cos, engine.sin)
+
+    # Zero first: the cache still holds the warmup generation, and comparing
+    # whole caches diffs that leftover against slots the fused kernel never
+    # touches. Only the slot at pos is written by either path.
+    engine.k_cache[0].zero_(); engine.v_cache[0].zero_()
+    want_q = reference().clone()
+    want_k = engine.k_cache[0].clone()
+    want_v = engine.v_cache[0].clone()
+    engine.k_cache[0].zero_(); engine.v_cache[0].zero_()
+
+    got_q = stage(x, bundle, engine.k_cache[0], engine.v_cache[0], pos).clone()
+    torch.cuda.synchronize()
+    scale = want_q.float().abs().max().item() or 1.0
+    print(f"  q   rel_err {(got_q.float() - want_q.float()).abs().max().item() / scale:.6f}"
+          f"  exact={torch.equal(got_q, want_q)}")
+    print(f"  pos={pos.item()}  cap={cap}  cache shape {tuple(engine.k_cache[0].shape)}")
+    for name, want, got in (("k", want_k, engine.k_cache[0]),
+                            ("v", want_v, engine.v_cache[0])):
+        d = (got.float() - want.float()).abs().max().item()
+        print(f"  {name}   max abs diff {d:.6f}  exact={torch.equal(got, want)}")
+        # where did each actually put values?
+        at = pos.item()
+        a, b_ = want[:, :, at, :], got[:, :, at, :]
+        print(f"       slot {at}: max diff {(a.float() - b_.float()).abs().max().item():.6f}"
+              f"  exact={torch.equal(a, b_)}")
+
+    def clock(fn, reps=20):
+        for _ in range(5):
+            fn()
+        runs = []
+        for _ in range(5):
+            torch.cuda.synchronize()
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                fn()
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / reps)
+        return statistics.median(runs)
+
+    split = clock(reference)
+    fused = clock(lambda: stage(x, bundle, engine.k_cache[0], engine.v_cache[0], pos))
+    for g in (132, 198, 264, 396, 528, 792):
+        try:
+            trial = cuda_qkv.QkvStage(
+                batch, engine.hidden, engine.q_width, engine.kv_width,
+                engine.n_kv, cap, engine.eps, "cuda", grid=g)
+        except Exception:
+            continue
+        ms = clock(lambda t=trial: t(x, bundle, engine.k_cache[0],
+                                     engine.v_cache[0], pos))
+        print(f"    grid {trial.grid:4d}  {ms * 1e3:6.2f}us", flush=True)
+    gemm_only = clock(lambda: F.linear(rms_norm(x, layer.norm_in, engine.eps), layer.qkv))
+    pre = cuda_qkv.QkvStage(
+        batch, engine.hidden, engine.q_width, engine.kv_width,
+        engine.n_kv, cap, engine.eps, "cuda", prenormed=True,
+    )
+    nx = rms_norm(x, layer.norm_in, engine.eps)
+    fused_pre = clock(lambda: pre(nx, bundle, engine.k_cache[0], engine.v_cache[0], pos))
+    print(f"  split {split * 1e3:6.2f}us   fused {fused * 1e3:6.2f}us   "
+          f"fused_prenormed {fused_pre * 1e3:6.2f}us   "
+          f"norm+gemm alone {gemm_only * 1e3:6.2f}us", flush=True)
+    print(f"  phase-0 redundant norm costs {(fused - fused_pre) * 1e3:.2f}us",
+          flush=True)
