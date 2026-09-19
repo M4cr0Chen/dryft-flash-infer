@@ -1,0 +1,81 @@
+"""RMSNorm, and the residual add fused into the norm that follows it.
+
+Both kernels reproduce ``Qwen3RMSNorm.forward``'s cast placement exactly:
+
+    return self.weight * hidden_states.to(input_dtype)
+
+so the normalised value is rounded to bfloat16 *before* the weight multiply.
+Keeping the product in fp32 is more accurate, and is a different function: on
+some prompt it moves a logit further than the 2.0 tie margin allows. Reorder
+arithmetic freely; do not reformulate it.
+"""
+
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _rms_norm_kernel(X, W, Y, N: tl.constexpr, eps, BLOCK: tl.constexpr):
+    row = tl.program_id(0).to(tl.int64)
+    cols = tl.arange(0, BLOCK)
+    mask = cols < N
+    off = row * N + cols
+
+    x = tl.load(X + off, mask=mask, other=0.0).to(tl.float32)
+    scale = tl.math.rsqrt(tl.sum(x * x, axis=0) / N + eps)
+    w = tl.load(W + cols, mask=mask, other=0.0).to(tl.float32)
+    y = (x * scale).to(tl.bfloat16).to(tl.float32) * w
+    tl.store(Y + off, y.to(tl.bfloat16), mask=mask)
+
+
+@triton.jit
+def _add_rms_norm_kernel(X, D, W, R, Y, N: tl.constexpr, eps, BLOCK: tl.constexpr):
+    row = tl.program_id(0).to(tl.int64)
+    cols = tl.arange(0, BLOCK)
+    mask = cols < N
+    off = row * N + cols
+
+    # The residual add is a bfloat16 add in the reference, so it rounds here.
+    x = tl.load(X + off, mask=mask, other=0.0).to(tl.float32)
+    d = tl.load(D + off, mask=mask, other=0.0).to(tl.float32)
+    r = (x + d).to(tl.bfloat16)
+    tl.store(R + off, r, mask=mask)
+
+    rf = r.to(tl.float32)
+    scale = tl.math.rsqrt(tl.sum(rf * rf, axis=0) / N + eps)
+    w = tl.load(W + cols, mask=mask, other=0.0).to(tl.float32)
+    y = (rf * scale).to(tl.bfloat16).to(tl.float32) * w
+    tl.store(Y + off, y.to(tl.bfloat16), mask=mask)
+
+
+def _launch_shape(n_cols: int) -> tuple[int, int]:
+    block = triton.next_power_of_2(n_cols)
+    return block, max(4, min(16, block // 256))
+
+
+def rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
+    """RMSNorm over the last dimension of a contiguous ``[rows, n]`` tensor."""
+    rows, n = x.shape
+    out = torch.empty_like(x)
+    block, warps = _launch_shape(n)
+    _rms_norm_kernel[(rows,)](x, weight, out, n, eps, BLOCK=block, num_warps=warps)
+    return out
+
+
+def add_rms_norm(
+    x: torch.Tensor, delta: torch.Tensor, weight: torch.Tensor, eps: float
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``residual = x + delta`` in bfloat16, then RMSNorm of that residual.
+
+    Returns ``(residual, normed)``. Both are fresh tensors; the caller keeps the
+    residual for the next branch and feeds the normed value to the projection.
+    """
+    rows, n = x.shape
+    residual = torch.empty_like(x)
+    out = torch.empty_like(x)
+    block, warps = _launch_shape(n)
+    _add_rms_norm_kernel[(rows,)](
+        x, delta, weight, residual, out, n, eps, BLOCK=block, num_warps=warps
+    )
+    return residual, out
