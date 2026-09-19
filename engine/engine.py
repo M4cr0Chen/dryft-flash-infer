@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from kernels import (
     HAVE_TRITON,
     NgramDrafter,
+    cuda_mlp,
     fp8,
     DecodeAttention,
     pick_matmul,
@@ -317,6 +318,7 @@ class Engine:
         """
         self.matmul = {}
         self.operand = {}
+        self.fused_mlp = None
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
         quantised = {}
@@ -362,8 +364,59 @@ class Engine:
             else:
                 self.operand[name] = every
             print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
+        self._choose_mlp(batch)
         if self.cuda:
             torch.cuda.empty_cache()
+
+    def _choose_mlp(self, batch: int) -> None:
+        """Race the fused gate/up+SwiGLU kernel against running them apart.
+
+        It folds the SwiGLU into the projection's epilogue, so the 2*I
+        intermediate never reaches memory. Wins at small batches and loses at
+        sixteen, where one accumulator pair per row exhausts the registers.
+        """
+        import statistics
+
+        self.fused_mlp = None
+        if not (cuda_mlp is not None and cuda_mlp.ready()):
+            return
+        weights = [ly.gate_up for ly in self.layers]
+        x = torch.randn(batch, self.hidden, dtype=torch.bfloat16, device=self.device)
+        reference = swiglu(F.linear(x, weights[0]))
+        scale = reference.float().abs().max().item() or 1.0
+
+        def clock(fn):
+            for w in weights[:4]:
+                fn(w)
+            runs = []
+            for _ in range(5):
+                torch.cuda.synchronize()
+                a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+                a.record()
+                for w in weights:
+                    fn(w)
+                b.record()
+                torch.cuda.synchronize()
+                runs.append(a.elapsed_time(b) / len(weights))
+            return statistics.median(runs)
+
+        split = clock(lambda w: swiglu(F.linear(x, w)))
+        best, chosen = split, None
+        for config in cuda_mlp.CONFIGS:
+            runner = (lambda w, c=config: cuda_mlp.gate_up_swiglu(x, w, config=c))
+            try:
+                out = runner(weights[0])
+            except Exception:
+                break
+            if (out.float() - reference.float()).abs().max().item() / scale > 0.02:
+                continue
+            elapsed = clock(runner)
+            if elapsed < best * 0.97:
+                best, chosen = elapsed, config
+        if chosen is not None:
+            self.fused_mlp = lambda a, w, c=chosen: cuda_mlp.gate_up_swiglu(a, w, config=c)
+        print(f"engine: mlp      fused={chosen}  {split / best:.2f}x vs split",
+              file=sys.stderr)
 
     def _capture(self) -> None:
         """Compile every kernel on this shape, then record one decode step."""
@@ -421,8 +474,11 @@ class Engine:
             x, normed = add_rms_norm(
                 x, project("o", index, attended, layer.o), layer.norm_post, self.eps
             )
-            gate_up = project("gate_up", index, normed, layer.gate_up)
-            down = project("down", index, swiglu(gate_up), layer.down)
+            if matmul and self.fused_mlp is not None:
+                inner = self.fused_mlp(normed, layer.gate_up)
+            else:
+                inner = swiglu(project("gate_up", index, normed, layer.gate_up))
+            down = project("down", index, inner, layer.down)
             following = (
                 self.layers[index + 1].norm_in
                 if index + 1 < self.n_layers

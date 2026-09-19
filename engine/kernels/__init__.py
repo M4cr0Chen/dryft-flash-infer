@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover - the container always has Triton
     pick_matmul = None
     fp8 = None
     cuda_gemv = None
+    cuda_mlp = None
     from .reference import (
         add_rms_norm,
         kv_norm_rope_to_cache,
@@ -28,7 +29,7 @@ except Exception:  # pragma: no cover - the container always has Triton
 else:
     HAVE_TRITON = True
     from .attention import DecodeAttention
-    from . import cuda_gemv, fp8
+    from . import cuda_gemv, cuda_mlp, fp8
     from .gemm import pick_matmul
     from .norm import add_rms_norm, rms_norm
     from .rope import kv_norm_rope_to_cache, q_norm_rope
@@ -41,6 +42,7 @@ __all__ = [
     "pick_matmul",
     "fp8",
     "cuda_gemv",
+    "cuda_mlp",
     "add_rms_norm",
     "kv_norm_rope_to_cache",
     "q_norm_rope",

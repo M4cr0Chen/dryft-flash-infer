@@ -1102,3 +1102,71 @@ def cuda_probe():
               f"speedup {bf16_ms / best:.2f}x  {best_cfg}", flush=True)
         del every
         torch.cuda.empty_cache()
+
+
+@app.function(
+    image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
+)
+def mlp_probe():
+    """Fused gate_up+SwiGLU against the two kernels it replaces."""
+    import statistics
+    import sys
+
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root")
+    sys.path.insert(0, "/root/engine")
+    _describe_gpu()
+    from kernels import cuda_mlp
+    from kernels.swiglu import swiglu
+
+    if not cuda_mlp.ready():
+        return
+
+    def clock(fn, operands, reps=3, trials=5):
+        for w in operands[:4]:
+            fn(w)
+        runs = []
+        for _ in range(trials):
+            torch.cuda.synchronize()
+            a, b = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+            a.record()
+            for _ in range(reps):
+                for w in operands:
+                    fn(w)
+            b.record()
+            torch.cuda.synchronize()
+            runs.append(a.elapsed_time(b) / (reps * len(operands)))
+        return statistics.median(runs)
+
+    inter, k = 9728, 2560
+    every = [torch.randn(2 * inter, k, dtype=torch.bfloat16, device="cuda") * 0.02
+             for _ in range(6)]
+    for batch in (1, 4, 16):
+        x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")
+        reference = swiglu(F.linear(x, every[0]))
+        try:
+            mine = cuda_mlp.gate_up_swiglu(x, every[0])
+            torch.cuda.synchronize()
+        except Exception as exc:
+            print(f"  batch {batch}: failed {type(exc).__name__}: {exc}"[:200])
+            continue
+        scale = reference.float().abs().max().item() or 1.0
+        err = (mine.float() - reference.float()).abs().max().item() / scale
+        exact = torch.equal(mine, reference)
+
+        split = clock(lambda w: swiglu(F.linear(x, w)), every)
+        best, cfg_best = float("inf"), None
+        for cfg in cuda_mlp.CONFIGS:
+            try:
+                ms = clock(lambda w, c=cfg: cuda_mlp.gate_up_swiglu(x, w, config=c), every)
+            except Exception:
+                continue
+            if ms < best:
+                best, cfg_best = ms, cfg
+        moved = every[0].numel() * 2
+        print(f"  batch {batch:2d}  rel_err {err:8.5f} exact={exact}  "
+              f"split {split * 1e3:6.1f}us {moved / (split * 1e-3) / 1e12:.2f}TB/s  "
+              f"fused {best * 1e3:6.1f}us {moved / (best * 1e-3) / 1e12:.2f}TB/s  "
+              f"speedup {split / best:.2f}x  {cfg_best}", flush=True)
