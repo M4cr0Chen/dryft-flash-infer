@@ -58,11 +58,24 @@ negative (-339 us) because kernels now overlap, and per-kernel times inflate
 with the time spent in `griddepcontrol.wait`, so the step wall is the number
 to read. Early trigger is the default.
 
-### Official result
+### Official results, and how noisy they are
 
 Commit `526318f`, run `8c9ea1b2`: **1257.7 tok/s, ranked**, all workloads
 passed; public 352.0 / 605.8 / 3799.2 tok/s. Up from 1212.1 (+3.8%), in line
 with the paired +3.5%. `official-pdl-20260920.json`.
+
+Repeated runs of the same commit on the platform, all passing:
+
+| Commit | Run 1 | Run 2 |
+| --- | ---: | ---: |
+| `b8ed20c` | 1212.1 | 1211.1 |
+| `cb6bb56` | 1224.0 | 806.3 |
+| `526318f` | 1257.7 | 1106.1 |
+| `8fc53e0` (all ten kernels in the chain) | 1227.1 | pending |
+
+A third of the runs land 10-35% low with every public case still passing,
+so a single official number is not a measurement of a 2% change; the paired
+local runs are. Compare commits on their best or median of several runs.
 
 ### RoPE and attention join the chain, without a rewrite
 
@@ -96,8 +109,29 @@ is half prefill, which this does not touch.
 
 The two-phase norm fusion (producer writes residual plus partial sum of
 squares, consumer normalises while staging) would remove the RMSNorm launches
-outright and stacks with this. Beyond that the launch pool is spent; the
-batch-32 GEMM is the next lever.
+outright and stacks with this. Beyond that the launch pool is spent.
+
+## The batch-32 GEMM: two hypotheses measured and rejected, September 20
+
+**Warps sharing a weight tile.** The ring kernel now takes ``nshare``: two or
+four warps copy one tile into the ring between them and each multiplies it
+against its own slice of the activation tiles, synchronising on a named
+barrier (`bar.sync 1+rowgroup`). Registers fall to 72-76 and three blocks fit
+per SM instead of one. Bit-exact, and slower on every projection and batch
+(`bench/share_probe.py`, batches 16/32/64): 0.74-0.99x, worst on gate/up.
+Occupancy is not what limits the wide batches. The configurations are out
+of the race; the machinery stays.
+
+**Coalesced stores.** `gemm_bisect.py` suggested the epilogue was a third of
+the batch-32 kernel, but its "no epilogue" variant let the compiler drop
+most of the MMAs with the stores, so that reading was wrong. Built anyway
+(`DRYFT_COAL`): accumulators transposed through shared memory, each block
+writing contiguous 512-byte rows. Bit-exact, 0.83-1.02x (`coal_probe.py`);
+the extra barrier and pass cost more than the scattered 32-byte stores. Off.
+
+What remains for batch 32 is the tensor pipe itself: `mma.sync` at N=8 tiles
+reaches about half of Hopper's `wgmma` rate, and the MMA count grows with the
+batch while the bytes do not. That is a `wgmma`/TMA rewrite, not a tuning.
 
 ## Below eight bits: a 4-bit kernel that works and a margin that does not, September 20
 

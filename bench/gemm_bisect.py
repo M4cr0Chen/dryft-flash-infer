@@ -34,16 +34,22 @@ NOMMA = ("                            tmp[nt][0] += __uint_as_float((a[0] ^ b0) 
          "                            tmp[nt][1] += __uint_as_float((a[1] ^ b1) & 0x3fffffffu);\n"
          "                            tmp[nt][2] += __uint_as_float((a[2] ^ b0) & 0x3fffffffu);\n"
          "                            tmp[nt][3] += __uint_as_float((a[3] ^ b1) & 0x3fffffffu);\n")
-DEQ = ("                        a[0] = int8x2_to_bf16x2(wl, 0x7650, 0x7651);\n"
-       "                        a[1] = int8x2_to_bf16x2(wh, 0x7650, 0x7651);\n"
-       "                        a[2] = int8x2_to_bf16x2(wl, 0x7652, 0x7653);\n"
-       "                        a[3] = int8x2_to_bf16x2(wh, 0x7652, 0x7653);\n")
+DEQ = ("                        a[0] = DEQUANT(wl, 0x7650, 0x7651);\n"
+       "                        a[1] = DEQUANT(wh, 0x7650, 0x7651);\n"
+       "                        a[2] = DEQUANT(wl, 0x7652, 0x7653);\n"
+       "                        a[3] = DEQUANT(wh, 0x7652, 0x7653);\n")
 NODEQ = ("                        a[0] = wl; a[1] = wh; a[2] = wl ^ 0x00010001u; a[3] = wh ^ 0x00010001u;\n")
+
+XB_LOADS = ("                        xb[nt][0] = src[0];\n"
+            "                        xb[nt][1] = src[1];\n")
+NOXB = ("                        xb[nt][0] = make_uint4(0x3f803f80u ^ (u32)nt, 0x3f803f80u, 0x3f803f80u, 0x3f803f80u);\n"
+        "                        xb[nt][1] = make_uint4(0x3f803f80u, 0x3f803f80u ^ (u32)local, 0x3f803f80u, 0x3f803f80u);\n")
 
 VARIANTS = {
     "full": {},
     "nomma": {"mma": True},
     "nodeq": {"deq": True},
+    "noxb": {"xb": True},          # activation fragments from registers, not shared memory
     "loads_only": {"mma": True, "deq": True},
     "nostage": {"stage": 0},
     "noepi": {"epi": True},
@@ -58,6 +64,9 @@ def build(name, opts, warps, nt, mode):
     if opts.get("deq"):
         assert DEQ in body
         body = body.replace(DEQ, NODEQ)
+    if opts.get("xb"):
+        assert XB_LOADS in body
+        body = body.replace(XB_LOADS, NOXB)
     epi = cuda_fp8._EPILOGUE
     if opts.get("epi"):
         # Keep one dependent store so the compiler cannot drop the loop.
@@ -65,10 +74,9 @@ def build(name, opts, warps, nt, mode):
     stage = opts.get("stage", 1)
     src = cuda_fp8._HEAD + cuda_fp8._STAGING + body + epi
     kname = f"bisect_{name}_w{warps}_n{nt}_m{mode}_s{stage}"
-    for key, value in {"NAME": kname, "WARPS": warps, "THREADS": warps * 32, "NT": nt,
-                       "NSHARE": 1, "MODE": mode, "STAGE": stage}.items():
-        src = src.replace("@" + key + "@", str(value))
-    return cuda_jit.Module(cuda_fp8._PRELUDE + src).kernel(kname), stage
+    src = cuda_fp8._substitute(cuda_fp8._PRELUDE + src, NAME=kname, WARPS=warps, THREADS=warps * 32,
+                               NT=nt, NSHARE=1, MODE=mode, STAGE=stage, TILED=1, BITS=8, PDL=0)
+    return cuda_jit.Module(src).kernel(kname), stage
 
 
 def launch(kernel, stage, prepared, x, config, mode):
@@ -90,17 +98,19 @@ def run():
     assert cuda_fp8.ready()
     stream = cuda_jit.Module(STREAM).kernel("stream")
     flag = torch.zeros(2, dtype=torch.int32, device="cuda")
-    shapes = [("qkv", 6144, 2560, (4, 4)), ("gate_up", 19456, 2560, (8, 4)), ("down", 2560, 9728, (4, 8))]
+    shapes = [("gate_up", 19456, 2560, (8, 4, 1, 1, 0)), ("down", 2560, 9728, (8, 4, 1, 1, 0)),
+              ("lm_head", 151936, 2560, (8, 2, 1, 1, 0))]
     rows = []
     for name, n, k, config in shapes:
-        weights = [torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02 for _ in range(12)]
-        prepared = [cuda_fp8.prepare(cuda_fp8.quantize(w)) for w in weights]
+        weights = [torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
+                   for _ in range(1 if name == "lm_head" else 12)]
+        prepared = [cuda_fp8.prepare(cuda_fp8.quantize(w), tiled=True) for w in weights]
         del weights
         nbytes = prepared[0].bytes_moved()
         chunks = prepared[0].weight.numel() // 16
         grid = -(-chunks // (256 * 8))
         stream_us = time_calls(lambda p: stream(grid, 256, p.weight, chunks, flag), prepared, reps=2, trials=5) * 1e3
-        for batch in (1, 16):
+        for batch in (16, 32, 64):
             x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")
             warps, nt, splitk, gps, _, _, _ = cuda_fp8._plan(prepared[0], batch, config)
             mode = 1 if splitk > 1 else 0

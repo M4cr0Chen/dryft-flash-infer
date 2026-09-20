@@ -48,6 +48,9 @@ TILED = os.environ.get("DRYFT_TILED", "on") == "on"
 #: programmatic-serialization attribute, so a GEMM's weight loads are in
 #: flight while the previous kernel in the stream finishes.
 PDL = {"off": 0, "late": 1, "on": 2, "early": 2}[os.environ.get("DRYFT_PDL", "early")]
+#: Block-cooperative epilogue: transpose the accumulators through shared
+#: memory and store contiguous rows. Same values as the direct stores.
+COALESCED = os.environ.get("DRYFT_COAL", "off") == "on"
 
 #: Values per scale. One scale covers one 64-wide block of the weight, which
 #: is exactly what a lane's two 16-byte loads cover in a K step.
@@ -189,6 +192,9 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     const int ngroups = g_end - g_begin;
     const int k0 = g_begin * 128;
     const int stride = GPS * 128 + 8;   // +16 bytes keeps the fragment loads conflict-free
+    // The epilogue's transpose buffer sits behind the staged activation.
+    unsigned char* tbuf_base = reinterpret_cast<unsigned char*>(xs)
+        + (@STAGE@ ? (size_t)@NT@ * @NSHARE@ * 8 * stride * 2 : 0);
 
     const int lane = threadIdx.x & 31;
     const int warp = threadIdx.x >> 5;
@@ -298,12 +304,11 @@ _STAGING = r"""
 """
 
 _BODY = r"""
-    if (!live) return;
-
     float acc[@NT@][4];
     #pragma unroll
     for (int nt = 0; nt < @NT@; ++nt) { acc[nt][0] = acc[nt][1] = acc[nt][2] = acc[nt][3] = 0.f; }
 
+    if (live)
     for (int base = 0; base < ngroups; base += 2) {
         // Prefetch the pair after this one.
         #pragma unroll
@@ -395,6 +400,60 @@ _BODY = r"""
 
 _EPILOGUE = r"""
     PDL_TRIGGER_LATE();
+#if @COAL@
+    // Block-cooperative stores. Each warp's accumulators are a 16-column
+    // slice of every output row; written directly they are 32-byte scraps,
+    // and at wide batch those scraps were a third of the kernel. Deposit the
+    // block's [batch tile x rows] result in shared memory, then write it as
+    // contiguous rows.
+    __syncthreads();   // everyone is done with the staged activation and the rings
+    float* tbuf = reinterpret_cast<float*>(tbuf_base);
+    const int BT = @NT@ * @NSHARE@ * 8;
+#if @MODE@ == 2
+    const int RPB = (@WARPS@ / @NSHARE@) * 8;
+#else
+    const int RPB = (@WARPS@ / @NSHARE@) * 16;
+#endif
+    const int RPBP = RPB + 4;   // padded row pitch: lanes deposit conflict-free
+    const int rb0 = rowblock * RPB;
+    if (live) {
+        #pragma unroll
+        for (int nt = 0; nt < @NT@; ++nt) {
+            #pragma unroll
+            for (int c = 0; c < 2; ++c) {
+                const int n = n0 + nt * 8 + 2 * t + c;
+                if (n < B) {
+#if @MODE@ == 2
+                    const float gb = bf16_to_f32(f32_to_bf16(acc[nt][c]));
+                    const float ub = bf16_to_f32(f32_to_bf16(acc[nt][2 + c]));
+                    const float si = bf16_to_f32(f32_to_bf16(gb / (1.0f + __expf(-gb))));
+                    tbuf[n * RPBP + rowgroup * 8 + g] = si * ub;
+#else
+                    tbuf[n * RPBP + rowgroup * 16 + g] = acc[nt][c];
+                    tbuf[n * RPBP + rowgroup * 16 + 8 + g] = acc[nt][2 + c];
+#endif
+                }
+            }
+        }
+    }
+    __syncthreads();
+#if @MODE@ == 1
+    float* out = reinterpret_cast<float*>(OUT) + (size_t)split * B * N;
+#else
+    bf16* out = reinterpret_cast<bf16*>(OUT);
+#endif
+    for (int idx = threadIdx.x; idx < BT * RPB; idx += @THREADS@) {
+        const int n = idx / RPB, r = idx - n * RPB;
+        if (n < B && rb0 + r < N) {
+#if @MODE@ == 1
+            out[(size_t)n * N + rb0 + r] = tbuf[n * RPBP + r];
+#else
+            out[(size_t)n * N + rb0 + r] = f32_to_bf16(tbuf[n * RPBP + r]);
+#endif
+        }
+    }
+#else
+    if (!live) return;
 #if @MODE@ == 0
     bf16* out = reinterpret_cast<bf16*>(OUT);
     #pragma unroll
@@ -439,6 +498,7 @@ _EPILOGUE = r"""
         }
     }
 #endif
+#endif
 }
 """
 
@@ -452,6 +512,13 @@ _RING_HEAD = r"""
 // what the register file allows. Rows are stored swizzled: odd rows swap their
 // 64-byte halves, which keeps the fragment reads conflict-free without padding.
 // The arithmetic and its order are identical to the register kernel.
+// The warps sharing a tile synchronise on a named barrier (ids 1..); a lone
+// warp only needs its own lanes converged.
+#if @NSHARE@ > 1
+#define GROUP_SYNC() asm volatile("bar.sync %0, %1;" :: "r"(1 + rowgroup), "n"(32 * @NSHARE@) : "memory")
+#else
+#define GROUP_SYNC() __syncwarp()
+#endif
 extern "C" __global__ void __launch_bounds__(@THREADS@)
 @NAME@(const unsigned char* __restrict__ W, const u32* __restrict__ S,
        const bf16* __restrict__ X, void* __restrict__ OUT,
@@ -470,16 +537,20 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
 
     const int lane = threadIdx.x & 31;
     const int warp = threadIdx.x >> 5;
+    // @NSHARE@ warps share one weight tile: each copies a slice of it into
+    // the ring and multiplies the whole tile against its own activation tiles.
+    const int rowgroup = warp / @NSHARE@;
+    const int share = warp % @NSHARE@;
     const int g = lane >> 2;
     const int t = lane & 3;
-    const int n0 = 0;
+    const int n0 = share * (@NT@ * 8);
 #if @MODE@ == 2
-    const int i0 = (rowblock * @WARPS@ + warp) * 8;
+    const int i0 = (rowblock * (@WARPS@ / @NSHARE@) + rowgroup) * 8;
     const bool live = i0 < N;
     const int band0 = live ? i0 : 0;
     const int band1 = live ? N + i0 : 0;
 #else
-    const int rb = (rowblock * @WARPS@ + warp) * 16;
+    const int rb = (rowblock * (@WARPS@ / @NSHARE@) + rowgroup) * 16;
     const bool live = rb < N;
     const int band0 = live ? rb : 0;
     const int band1 = band0 + 8;
@@ -489,20 +560,27 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     const u32* s_lo = S + (size_t)row_lo * G + g_begin;
     const u32* s_hi = S + (size_t)row_hi * G + g_begin;
 
-    // This warp's ring sits behind the staged activation.
+    // This row group's ring sits behind the staged activation, and the
+    // epilogue's transpose buffer behind all the rings.
     unsigned char* ring = reinterpret_cast<unsigned char*>(xs)
-        + (size_t)@NT@ * 8 * stride * 2 + (size_t)warp * (@RING@ * @TILE@);
-    const unsigned char* csrc[4];
-    u32 cdst[4];
+        + (size_t)@NT@ * @NSHARE@ * 8 * stride * 2 + (size_t)rowgroup * (@RING@ * @TILE@);
+    unsigned char* tbuf_base = reinterpret_cast<unsigned char*>(xs)
+        + (size_t)@NT@ * @NSHARE@ * 8 * stride * 2 + (size_t)(@WARPS@ / @NSHARE@) * (@RING@ * @TILE@);
+    const unsigned char* csrc[@NCOPY@];
+    u32 cdst[@NCOPY@];
 #if @TILED@
     // Tiled layout: a group is one tile (2 KB, or 1 KB at 4 bits), copied
     // verbatim: @TILE@/512 chunks of 16 bytes per lane, lo band then hi band.
     const unsigned char* tile_lo = W + ((size_t)(row_lo >> 4) * G + g_begin) * @TILE@ + ((row_lo & 15) >> 3) * (@TILE@ / 2);
     const unsigned char* tile_hi = W + ((size_t)(row_hi >> 4) * G + g_begin) * @TILE@ + ((row_hi & 15) >> 3) * (@TILE@ / 2);
+    // Chunk c of the tile (16 bytes) is copied by lane ``c % 32`` of sharing
+    // warp ``(c / 32) % NSHARE``; the lo band is the first half of the chunks.
     #pragma unroll
-    for (int i = 0; i < @TILE@ / 512; ++i) {
-        csrc[i] = (i < @TILE@ / 1024 ? tile_lo : tile_hi) + ((i % (@TILE@ / 1024)) * 32 + lane) * 16;
-        cdst[i] = (u32)__cvta_generic_to_shared(ring) + (i * 32 + lane) * 16;
+    for (int i = 0; i < @NCOPY@; ++i) {
+        const int c = (i * @NSHARE@ + share) * 32 + lane;
+        const int half_chunks = @TILE@ / 32;
+        csrc[i] = (c < half_chunks ? tile_lo : tile_hi) + (c % half_chunks) * 16;
+        cdst[i] = (u32)__cvta_generic_to_shared(ring) + c * 16;
     }
     const size_t gstep = @TILE@;
 #else
@@ -535,12 +613,11 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
 """
 
 _RING_BODY = r"""
-    if (!live) return;
-
     float acc[@NT@][4];
     #pragma unroll
     for (int nt = 0; nt < @NT@; ++nt) { acc[nt][0] = acc[nt][1] = acc[nt][2] = acc[nt][3] = 0.f; }
 
+    if (live)
     for (int base = 0; base < ngroups; base += @RING@) {
         #pragma unroll
         for (int s = 0; s < @RING@; ++s) {
@@ -548,7 +625,7 @@ _RING_BODY = r"""
             if (local < ngroups) {
                 // Every group but the newest @RING@-1 has landed, so this one has.
                 CP_WAIT_PENDING(@RING@ - 1);
-                __syncwarp();
+                GROUP_SYNC();
                 const unsigned char* slot = ring + s * @TILE@;
                 float scl_lo[2], scl_hi[2];
                 f16x2_to_f32(rs_lo[s], scl_lo[0], scl_lo[1]);
@@ -571,7 +648,7 @@ _RING_BODY = r"""
                     #pragma unroll
                     for (int nt = 0; nt < @NT@; ++nt) {
                         const uint4* src = reinterpret_cast<const uint4*>(
-                            xs + (nt * 8 + g) * stride + local * 128 + j * 64 + t * 16);
+                            xs + (n0 + nt * 8 + g) * stride + local * 128 + j * 64 + t * 16);
                         xb[nt][0] = src[0];
                         xb[nt][1] = src[1];
                     }
@@ -599,7 +676,7 @@ _RING_BODY = r"""
                         acc[nt][3] = fmaf(tmp[nt][3], scl_hi[j], acc[nt][3]);
                     }
                 }
-                __syncwarp();
+                GROUP_SYNC();
                 const int next = local + @RING@;
                 if (next < ngroups) {
                     #pragma unroll
@@ -613,7 +690,7 @@ _RING_BODY = r"""
     }
 """
 
-_RING_TEMPLATE = _RING_HEAD + _STAGING + _RING_BODY + _EPILOGUE
+_RING_TEMPLATE = _RING_HEAD + _STAGING + _RING_BODY + _EPILOGUE + "\n#undef GROUP_SYNC\n"
 
 _FUSED = r"""
 // The o and down projections with the residual add and the RMSNorm that
@@ -923,9 +1000,11 @@ def _substitute(template: str, **values) -> str:
     tiled = values.get("TILED", 0)
     values = dict(values)
     values.setdefault("PDL", int(PDL))
+    values.setdefault("COAL", int(COALESCED))
     values.setdefault("TILE", 2048 if bits == 8 else 1024)     # bytes per warp per group, tiled
     values.setdefault("CHUNKS", 2 if bits == 8 else 1)          # 16-byte lane chunks per group
-    values.setdefault("NCOPY", (values["TILE"] // 512) if tiled else 4)
+    nshare = int(values.get("NSHARE", 1))
+    values.setdefault("NCOPY", (values["TILE"] // 512 // nshare) if tiled else 4)
     for key, value in values.items():
         template = template.replace("@" + key + "@", str(value))
     return template
@@ -937,24 +1016,28 @@ def _substitute(template: str, **values) -> str:
 _RING_WARPS = (4, 8)
 
 
-def _ring_source(nt: int, ring: int, tiled: bool, bits: int = 8) -> str:
+def _ring_source(nt: int, ring: int, tiled: bool, bits: int = 8, nshare: int = 1) -> str:
     if bits != 8 and not tiled:
         raise ValueError("4-bit weights are stored tiled")
+    if nshare > 1 and not tiled:
+        raise ValueError("shared weight tiles need the tiled layout")
     parts = [_substitute(_PRELUDE, BITS=bits)]
     for warps in _RING_WARPS:
+        if warps % nshare:
+            continue
         for mode in _MODES:
             parts.append(_substitute(
-                _RING_TEMPLATE, NAME=_name(warps, nt, mode, 1, 1, ring, tiled, bits),
-                WARPS=warps, THREADS=warps * 32, NT=nt, NSHARE=1, MODE=mode, STAGE=1,
+                _RING_TEMPLATE, NAME=_name(warps, nt, mode, 1, nshare, ring, tiled, bits),
+                WARPS=warps, THREADS=warps * 32, NT=nt, NSHARE=nshare, MODE=mode, STAGE=1,
                 RING=ring, TILED=int(tiled), BITS=bits))
     return "\n".join(parts)
 
 
-def _ring_module(nt: int, ring: int, tiled: bool = None, bits: int = 8):
+def _ring_module(nt: int, ring: int, tiled: bool = None, bits: int = 8, nshare: int = 1):
     tiled = TILED if tiled is None else tiled
-    key = ("ring", nt, ring, tiled, bits, PDL)
+    key = ("ring", nt, ring, tiled, bits, PDL, nshare, COALESCED)
     if key not in _modules:
-        _modules[key] = cuda_jit.Module(_ring_source(nt, ring, tiled, bits))
+        _modules[key] = cuda_jit.Module(_ring_source(nt, ring, tiled, bits, nshare))
     return _modules[key]
 
 
@@ -1012,7 +1095,7 @@ def _fused_module(warps: int, nt: int, stage: int, tail: int = 1):
 
 def _module_for(nt: int, nshare: int = 1, tiled: bool = None, bits: int = 8):
     tiled = TILED if tiled is None else tiled
-    key = (nt, nshare, tiled, bits, PDL)
+    key = (nt, nshare, tiled, bits, PDL, COALESCED)
     if key not in _modules:
         _modules[key] = cuda_jit.Module(_source(nt, nshare, tiled, bits))
     return _modules[key]
@@ -1152,9 +1235,17 @@ def _ntiles(batch: int, nshare: int = 1) -> int:
 
 
 def _shared_bytes(nt: int, gps: int, nshare: int = 1, warps: int = 0, ring: int = 0,
-                  bits: int = 8) -> int:
-    """Staged activation, plus the per-warp weight rings when ``ring`` groups are used."""
-    return nt * nshare * 8 * (gps * 128 + 8) * 2 + warps * ring * (2048 if bits == 8 else 1024)
+                  bits: int = 8, stage: int = 1, transpose: bool = True) -> int:
+    """Staged activation, one weight ring per row group, and the epilogue's transpose buffer.
+
+    ``transpose=False`` leaves the buffer out, so the split-K plan does not
+    depend on which epilogue is built.
+    """
+    groups = max(1, warps // max(1, nshare))
+    staged = nt * nshare * 8 * (gps * 128 + 8) * 2 if stage else 0
+    rings = groups * ring * (2048 if bits == 8 else 1024)
+    tbuf = nt * nshare * 8 * (groups * 16 + 4) * 4 if (COALESCED and warps and transpose) else 0
+    return staged + rings + tbuf
 
 
 #: Hopper allows up to 227 KiB of dynamic shared memory per block.
@@ -1169,8 +1260,8 @@ def _plan(prepared: Prepared, batch: int, config):
     ring = config[4] if len(config) > 4 else 0
     if warps % nshare:
         raise ValueError("warps sharing a row block must divide the block's warps")
-    if ring and (nshare != 1 or not stage or warps not in _RING_WARPS):
-        raise ValueError("the ring kernel stages the activation, one warp per row block, 4 or 8 warps")
+    if ring and (not stage or warps not in _RING_WARPS):
+        raise ValueError("the ring kernel stages the activation, 4 or 8 warps")
     nt = _ntiles(batch, nshare)
     groups = prepared.groups
     if splitk == "pairs":
@@ -1178,7 +1269,7 @@ def _plan(prepared: Prepared, batch: int, config):
     splitk = max(1, min(splitk, groups))
     gps = -(-groups // splitk)
     if stage:
-        while _shared_bytes(nt, gps, nshare, warps, ring, prepared.bits) > _SHARED_LIMIT and gps > 1:
+        while _shared_bytes(nt, gps, nshare, warps, ring, prepared.bits, stage, transpose=False) > _SHARED_LIMIT and gps > 1:
             splitk += 1
             gps = -(-groups // splitk)
     splitk = -(-groups // gps)
@@ -1195,12 +1286,12 @@ def _launch(mode, prepared, x, out, n_eff, config):
     rows_per_block = (warps // nshare) * (8 if mode == 2 else 16)
     rowblocks = -(-n_eff // rows_per_block)
     if ring:
-        kernel = _ring_module(nt, ring, prepared.tiled, prepared.bits).kernel(
-            _name(warps, nt, mode, 1, 1, ring, prepared.tiled, prepared.bits))
+        kernel = _ring_module(nt, ring, prepared.tiled, prepared.bits, nshare).kernel(
+            _name(warps, nt, mode, 1, nshare, ring, prepared.tiled, prepared.bits))
     else:
         kernel = _module_for(nt, nshare, prepared.tiled, prepared.bits).kernel(
             _name(warps, nt, mode, stage, nshare, 0, prepared.tiled, prepared.bits))
-    kernel.set_shared(_shared_bytes(nt, gps, nshare, warps, ring, prepared.bits) if stage else 0)
+    kernel.set_shared(_shared_bytes(nt, gps, nshare, warps, ring, prepared.bits, stage))
     kernel.pdl = bool(PDL)
     kernel(rowblocks * splitk, warps * 32,
            prepared.weight, prepared.scale, x, out,
@@ -1316,6 +1407,13 @@ _BASE = [
 ]
 RING_DEPTH = 2
 _RING_BASE = [(8, 2), (8, 4), (8, 16), (4, 4), (4, 8)]
+#: Two or four warps sharing one weight tile through the ring: the tile comes
+#: from HBM once, each warp holds a quarter or half of the activation tiles,
+#: so the register kernel's one-block-per-SM at batch 32 becomes three or
+#: four. ``applicable`` admits them only when there are tiles to split.
+_SHARED_RING = [(8, 2, 2), (8, 4, 2), (8, 16, 2), (4, 4, 2), (8, 4, 4), (8, 16, 4)]
+# Measured at batches 16-64 (``bench/share_probe.py``): 0.74-0.99x of the
+# single-warp kernels on every projection, so they stay out of the race.
 CONFIGS = [(w, k, 1, 1, 0) for w, k in _BASE] + [(w, k, 1, 1, RING_DEPTH) for w, k in _RING_BASE]
 # Two or four warps sharing a row block (``nshare`` > 1) were measured at
 # batches 32 and 64 and lost to the single-warp layout on every shape: the

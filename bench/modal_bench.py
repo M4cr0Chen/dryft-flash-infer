@@ -66,6 +66,8 @@ image = (
     .add_local_file("bench/pdl_diag.py", "/root/pdl_diag.py")
     .add_local_file("bench/triton_pdl_probe.py", "/root/triton_pdl_probe.py")
     .add_local_file("bench/triton_abi_probe.py", "/root/triton_abi_probe.py")
+    .add_local_file("bench/share_probe.py", "/root/share_probe.py")
+    .add_local_file("bench/coal_probe.py", "/root/coal_probe.py")
     .add_local_file("bench/gemm_bisect.py", "/root/gemm_bisect.py")
     .add_local_file("bench/tiled_probe.py", "/root/tiled_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
@@ -198,7 +200,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
                       long_context: bool = False, candidate_kv: str = "bf16",
                       baseline_fp8: str = "off", candidate_int8_mma: str = "off",
                       baseline_int8_mma: str = "off", candidate_int4: str = "",
-                      candidate_pdl: str = "off"):
+                      candidate_pdl: str = "off", wide: bool = False):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -234,6 +236,8 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     shapes = list(PUBLIC_SHAPES)
     if long_context:
         shapes.append(("coverage-long", 1, 4096, 65))
+    if wide:
+        shapes += [("coverage-wide", 32, 256, 16), ("coverage-wide-long", 32, 512, 64)]
     for index, shape in enumerate(shapes):
         order = ["baseline", "candidate"] if index % 2 == 0 else ["candidate", "baseline"]
         for label in order:
@@ -259,7 +263,7 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
             candidate_fp8: str = "on", short_draft: int = 2,
             long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
             candidate_int8_mma: str = "off", baseline_int8_mma: str = "off",
-            candidate_int4: str = "", candidate_pdl: str = "off"):
+            candidate_int4: str = "", candidate_pdl: str = "off", wide: bool = False):
     import hashlib
     import json
     import subprocess
@@ -296,7 +300,8 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
                                        long_context=long_context, candidate_kv=candidate_kv,
                                        baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma,
                                        baseline_int8_mma=baseline_int8_mma,
-                                       candidate_int4=candidate_int4, candidate_pdl=candidate_pdl)
+                                       candidate_int4=candidate_int4, candidate_pdl=candidate_pdl,
+                                       wide=wide)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -1710,6 +1715,34 @@ def kv_checks():
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def coal_probe(batches: str = "1,4,16,32,64"):
+    """Direct versus block-cooperative epilogue stores, bit-exact and timed, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/coal_probe.py", batches],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-8000:], flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def share_probe(batches: str = "16,32,64"):
+    """Shared weight tiles in the ring against the single-warp kernels, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/share_probe.py", batches],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-8000:], flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def triton_abi_probe():
     """Which parameters Triton kept for the compiled RoPE kernel, and whether the relaunch matches."""
     import subprocess
