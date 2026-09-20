@@ -356,6 +356,276 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
 }
 """
 
+_FUSED = r"""
+// The o and down projections with the residual add and the RMSNorm that
+// follow them. All @WARPS@ warps of a block own the same sixteen output rows
+// and split K between them; the block reduces through shared memory and
+// writes a bfloat16 delta. The last block to finish (an atomic ticket) adds
+// the residual, normalises every row, and writes both, so no planes reach
+// memory and no second kernel launches.
+//
+// X: [B, K] bf16 natural order.  RES, DELTA, OUT_RES, OUT_NORM: [B, N] bf16.
+// NW: [N] bf16 norm weight.  COUNTER: one int, zero between launches.
+extern "C" __global__ void __launch_bounds__(@THREADS@)
+@NAME@(const unsigned char* __restrict__ W, const u32* __restrict__ S,
+       const bf16* __restrict__ X, const bf16* __restrict__ RES,
+       const bf16* __restrict__ NW, bf16* __restrict__ DELTA,
+       bf16* __restrict__ OUT_RES, bf16* __restrict__ OUT_NORM,
+       int* __restrict__ COUNTER, int N, int K, int B, int G, int GPW, float eps)
+{
+    extern __shared__ __align__(16) bf16 xs[];   // [WARPS][NT*8][GPW*128 + 8], permuted
+    __shared__ float red[@WARPS@][@NT@ * 8][16];
+    __shared__ float partial[@WARPS@];
+    __shared__ int am_last;
+
+    const int lane = threadIdx.x & 31;
+    const int warp = threadIdx.x >> 5;
+    const int g = lane >> 2;
+    const int t = lane & 3;
+    const int rb = blockIdx.x * 16;
+    const int row_lo = rb + g;
+    const int row_hi = rb + 8 + g;
+
+    const int g_begin = warp * GPW;
+    const int g_end = min(g_begin + GPW, G);
+    const int ngroups = max(0, g_end - g_begin);
+    const int k0 = g_begin * 128;
+    const int stride = GPW * 128 + 8;
+    bf16* xw = xs + (size_t)warp * (@NT@ * 8) * stride;
+
+    const unsigned char* w_lo = W + (size_t)row_lo * K + k0 + t * 16;
+    const unsigned char* w_hi = W + (size_t)row_hi * K + k0 + t * 16;
+    const u32* s_lo = S + (size_t)row_lo * G;
+    const u32* s_hi = S + (size_t)row_hi * G;
+
+    uint4 cur[2][2][2], nxt[2][2][2];
+    u32 sc[2][2], nsc[2][2];
+    #pragma unroll
+    for (int p = 0; p < 2; ++p) {
+        const bool ok = p < ngroups;
+        const size_t off = (size_t)p * 128;
+        #pragma unroll
+        for (int j = 0; j < 2; ++j) {
+            cur[p][j][0] = ok ? *reinterpret_cast<const uint4*>(w_lo + off + j * 64) : make_uint4(0,0,0,0);
+            cur[p][j][1] = ok ? *reinterpret_cast<const uint4*>(w_hi + off + j * 64) : make_uint4(0,0,0,0);
+        }
+        sc[p][0] = ok ? s_lo[g_begin + p] : 0u;
+        sc[p][1] = ok ? s_hi[g_begin + p] : 0u;
+    }
+
+#if @STAGE@
+    // Each warp stages its own K chunk of the activation, permuted into
+    // fragment order, with eight 16-byte loads in flight per lane.
+    {
+        const int nblk = ngroups * 2;
+        const int items = @NT@ * 8 * nblk * 8;
+        for (int base = lane; base < items; base += 32 * 8) {
+            uint4 v[8];
+            #pragma unroll
+            for (int u = 0; u < 8; ++u) {
+                const int it = base + u * 32;
+                v[u] = make_uint4(0, 0, 0, 0);
+                if (it < items) {
+                    const int piece = it & 7;
+                    const int rest = it >> 3;
+                    const int blk = rest % nblk;
+                    const int n = rest / nblk;
+                    if (n < B)
+                        v[u] = *reinterpret_cast<const uint4*>(X + (size_t)n * K + k0 + blk * 64 + piece * 8);
+                }
+            }
+            #pragma unroll
+            for (int u = 0; u < 8; ++u) {
+                const int it = base + u * 32;
+                if (it < items) {
+                    const int piece = it & 7;
+                    const int rest = it >> 3;
+                    const int blk = rest % nblk;
+                    const int n = rest / nblk;
+                    bf16* dst = xw + n * stride + blk * 64;
+                    const u32 words[4] = {v[u].x, v[u].y, v[u].z, v[u].w};
+                    #pragma unroll
+                    for (int q = 0; q < 4; ++q) {
+                        const int k = piece * 8 + q * 2;
+                        const int s = k >> 4, r = k & 15;
+                        const int tt = (r & 7) >> 1, hi = r >> 3;
+                        *reinterpret_cast<u32*>(dst + tt * 16 + s * 4 + hi * 2) = words[q];
+                    }
+                }
+            }
+        }
+        __syncwarp();
+    }
+#endif
+
+    float acc[@NT@][4];
+    #pragma unroll
+    for (int nt = 0; nt < @NT@; ++nt) { acc[nt][0] = acc[nt][1] = acc[nt][2] = acc[nt][3] = 0.f; }
+
+    for (int base = 0; base < ngroups; base += 2) {
+        #pragma unroll
+        for (int p = 0; p < 2; ++p) {
+            const int grp = base + 2 + p;
+            const bool ok = grp < ngroups;
+            const size_t off = (size_t)grp * 128;
+            #pragma unroll
+            for (int j = 0; j < 2; ++j) {
+                nxt[p][j][0] = ok ? *reinterpret_cast<const uint4*>(w_lo + off + j * 64) : cur[p][j][0];
+                nxt[p][j][1] = ok ? *reinterpret_cast<const uint4*>(w_hi + off + j * 64) : cur[p][j][1];
+            }
+            nsc[p][0] = ok ? s_lo[g_begin + grp] : 0u;
+            nsc[p][1] = ok ? s_hi[g_begin + grp] : 0u;
+        }
+        #pragma unroll
+        for (int p = 0; p < 2; ++p) {
+            const int local = base + p;
+            if (local < ngroups) {
+                float scl_lo[2], scl_hi[2];
+                f16x2_to_f32(sc[p][0], scl_lo[0], scl_lo[1]);
+                f16x2_to_f32(sc[p][1], scl_hi[0], scl_hi[1]);
+                #pragma unroll
+                for (int j = 0; j < 2; ++j) {
+                    float tmp[@NT@][4];
+                    #pragma unroll
+                    for (int nt = 0; nt < @NT@; ++nt) { tmp[nt][0] = tmp[nt][1] = tmp[nt][2] = tmp[nt][3] = 0.f; }
+                    uint4 xb[@NT@][2];
+#if @STAGE@
+                    #pragma unroll
+                    for (int nt = 0; nt < @NT@; ++nt) {
+                        const uint4* src = reinterpret_cast<const uint4*>(
+                            xw + (nt * 8 + g) * stride + local * 128 + j * 64 + t * 16);
+                        xb[nt][0] = src[0];
+                        xb[nt][1] = src[1];
+                    }
+#else
+                    #pragma unroll
+                    for (int nt = 0; nt < @NT@; ++nt) {
+                        const int n = nt * 8 + g;
+                        const bf16* xrow = X + (size_t)n * K + k0 + local * 128 + j * 64 + 2 * t;
+                        u32 v[8];
+                        #pragma unroll
+                        for (int s = 0; s < 4; ++s) {
+                            v[2 * s] = (n < B) ? *reinterpret_cast<const u32*>(xrow + 16 * s) : 0u;
+                            v[2 * s + 1] = (n < B) ? *reinterpret_cast<const u32*>(xrow + 16 * s + 8) : 0u;
+                        }
+                        xb[nt][0] = make_uint4(v[0], v[1], v[2], v[3]);
+                        xb[nt][1] = make_uint4(v[4], v[5], v[6], v[7]);
+                    }
+#endif
+                    #pragma unroll
+                    for (int s = 0; s < 4; ++s) {
+                        const u32 wl = word(cur[p][j][0], s);
+                        const u32 wh = word(cur[p][j][1], s);
+                        u32 a[4];
+                        a[0] = int8x2_to_bf16x2(wl, 0x7650, 0x7651);
+                        a[1] = int8x2_to_bf16x2(wh, 0x7650, 0x7651);
+                        a[2] = int8x2_to_bf16x2(wl, 0x7652, 0x7653);
+                        a[3] = int8x2_to_bf16x2(wh, 0x7652, 0x7653);
+                        #pragma unroll
+                        for (int nt = 0; nt < @NT@; ++nt) {
+                            const u32 b0 = word(xb[nt][s >> 1], (s & 1) * 2);
+                            const u32 b1 = word(xb[nt][s >> 1], (s & 1) * 2 + 1);
+                            mma_bf16(tmp[nt], a, b0, b1);
+                        }
+                    }
+                    #pragma unroll
+                    for (int nt = 0; nt < @NT@; ++nt) {
+                        acc[nt][0] = fmaf(tmp[nt][0], scl_lo[j], acc[nt][0]);
+                        acc[nt][1] = fmaf(tmp[nt][1], scl_lo[j], acc[nt][1]);
+                        acc[nt][2] = fmaf(tmp[nt][2], scl_hi[j], acc[nt][2]);
+                        acc[nt][3] = fmaf(tmp[nt][3], scl_hi[j], acc[nt][3]);
+                    }
+                }
+            }
+        }
+        #pragma unroll
+        for (int p = 0; p < 2; ++p) {
+            #pragma unroll
+            for (int j = 0; j < 2; ++j) { cur[p][j][0] = nxt[p][j][0]; cur[p][j][1] = nxt[p][j][1]; }
+            sc[p][0] = nsc[p][0]; sc[p][1] = nsc[p][1];
+        }
+    }
+
+    // Each warp's K-slice of the sixteen rows, then one fixed-order sum.
+    #pragma unroll
+    for (int nt = 0; nt < @NT@; ++nt) {
+        red[warp][nt * 8 + 2 * t][g] = acc[nt][0];
+        red[warp][nt * 8 + 2 * t + 1][g] = acc[nt][1];
+        red[warp][nt * 8 + 2 * t][8 + g] = acc[nt][2];
+        red[warp][nt * 8 + 2 * t + 1][8 + g] = acc[nt][3];
+    }
+    __syncthreads();
+    for (int i = threadIdx.x; i < B * 16; i += @THREADS@) {
+        const int n = i >> 4, r = i & 15;
+        float d = 0.f;
+        #pragma unroll
+        for (int w = 0; w < @WARPS@; ++w) d += red[w][n][r];
+        DELTA[(size_t)n * N + rb + r] = f32_to_bf16(d);
+    }
+#if @TAIL@ == 0
+    return;
+#endif
+    __threadfence();
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        const int ticket = atomicAdd(COUNTER, 1);
+        am_last = (ticket == (int)gridDim.x - 1);
+    }
+    __syncthreads();
+    if (!am_last) return;
+#if @TAIL@ == 2
+    if (threadIdx.x == 0) *COUNTER = 0;
+    return;
+#endif
+    __threadfence();
+
+    // Residual add, then RMSNorm, every row of the batch at once: each row is
+    // shared by WPR warps, each warp owns N / WPR columns. Rounding as the
+    // reference: the add rounds to bf16, the normalised value rounds to bf16
+    // before the weight, and the product rounds once more.
+    const int wpr = @WARPS@ / min(@WARPS@, B) ;           // warps per row
+    const int rows_per_pass = @WARPS@ / wpr;
+    const int seg_len = N / wpr;
+    const int passes = (B + rows_per_pass - 1) / rows_per_pass;
+    for (int pass = 0; pass < passes; ++pass) {
+        const int n = pass * rows_per_pass + warp / wpr;
+        const int seg = warp % wpr;
+        const bool mine = n < B;
+        float sumsq = 0.f;
+        if (mine) {
+            const size_t rowoff = (size_t)n * N + seg * seg_len;
+            #pragma unroll 8
+            for (int c = lane; c < seg_len; c += 32) {
+                const float x = bf16_to_f32(RES[rowoff + c]);
+                const float d = bf16_to_f32(__ldcg(reinterpret_cast<const u16*>(DELTA) + rowoff + c));
+                const bf16 r16 = f32_to_bf16(x + d);
+                OUT_RES[rowoff + c] = r16;
+                const float r = bf16_to_f32(r16);
+                sumsq = fmaf(r, r, sumsq);
+            }
+        }
+        #pragma unroll
+        for (int off = 16; off; off >>= 1) sumsq += __shfl_xor_sync(0xffffffffu, sumsq, off);
+        if (lane == 0) partial[warp] = sumsq;
+        __syncthreads();
+        float total = 0.f;
+        for (int w = 0; w < wpr; ++w) total += partial[(warp / wpr) * wpr + w];
+        __syncthreads();
+        if (mine) {
+            const float scale = rsqrtf(total / (float)N + eps);
+            const size_t rowoff = (size_t)n * N + seg * seg_len;
+            #pragma unroll 8
+            for (int c = lane; c < seg_len; c += 32) {
+                const float r = bf16_to_f32(OUT_RES[rowoff + c]);
+                const float y = bf16_to_f32(f32_to_bf16(r * scale)) * bf16_to_f32(NW[seg * seg_len + c]);
+                OUT_NORM[rowoff + c] = f32_to_bf16(y);
+            }
+        }
+    }
+    if (threadIdx.x == 0) *COUNTER = 0;
+}
+"""
+
 _REDUCE = r"""
 extern "C" __global__ void reduce_partials(const float* __restrict__ P,
                                            unsigned short* __restrict__ OUT,
@@ -415,6 +685,27 @@ def _source(nt: int, nshare: int) -> str:
 
 _modules = {}
 _ready = None
+_FUSED_ROWS = 2560   # the hidden width; the fused epilogue normalises rows of this length
+
+
+#: Bisection switches for the fused kernel: stage None picks by shared size;
+#: tail 1 is the real kernel, 0 stops after the delta, 2 stops after the ticket.
+FUSED_DEBUG = {"stage": None, "tail": 1}
+
+
+def _fused_name(warps: int, nt: int, stage: int, tail: int = 1) -> str:
+    return f"fp8_fused_w{warps}_n{nt}_s{stage}_t{tail}"
+
+
+def _fused_module(warps: int, nt: int, stage: int, tail: int = 1):
+    key = ("fused", warps, nt, stage, tail)
+    if key not in _modules:
+        threads = warps * 32
+        source = _PRELUDE + _FUSED.replace("@NAME@", _fused_name(warps, nt, stage, tail)) \
+            .replace("@WARPS@", str(warps)).replace("@THREADS@", str(threads)) \
+            .replace("@NT@", str(nt)).replace("@STAGE@", str(stage)).replace("@TAIL@", str(tail))
+        _modules[key] = cuda_jit.Module(source)
+    return _modules[key]
 
 
 def _module_for(nt: int, nshare: int = 1):
@@ -591,6 +882,52 @@ def matmul(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:
     reduce = _module_for(_NTS[0], 1).kernel("reduce_partials")
     reduce(-(-width // 256), 256, partial, out, width, splitk)
     return out
+
+
+def add_norm_scratch(batch: int, rows: int, device):
+    """The delta buffer and ticket counter ``matmul_add_norm`` needs, per call site."""
+    return (torch.empty((batch, rows), dtype=torch.bfloat16, device=device),
+            torch.zeros(1, dtype=torch.int32, device=device))
+
+
+def matmul_add_norm(x: torch.Tensor, prepared: Prepared, residual: torch.Tensor,
+                    norm_weight: torch.Tensor, eps: float, scratch, warps: int = 8):
+    """``residual + x @ W.T`` in bfloat16 and its RMSNorm, in one launch.
+
+    ``x`` is ``[B, K]``, ``residual`` ``[B, N]`` with ``N`` the weight's rows;
+    returns ``(new_residual, normed)``. ``scratch`` comes from
+    ``add_norm_scratch`` for this batch and is reused across layers.
+    """
+    batch, k = x.shape
+    n = prepared.rows
+    if k != prepared.k or n % 16 or n != _FUSED_ROWS:
+        raise ValueError("the fused add-norm serves the hidden-width projections")
+    if tuple(residual.shape) != (batch, n) or residual.dtype != torch.bfloat16:
+        raise ValueError("residual must be bfloat16 [batch, rows]")
+    nt = _ntiles(batch)
+    if nt > 2:
+        raise ValueError("the fused add-norm serves up to sixteen rows")
+    delta, counter = scratch
+    if tuple(delta.shape) != (batch, n):
+        raise ValueError("scratch does not match this batch")
+    out_res = torch.empty_like(residual)
+    out_norm = torch.empty_like(residual)
+    gpw = -(-prepared.groups // warps)
+    shared = warps * nt * 8 * (gpw * 128 + 8) * 2
+    stage = 1 if shared <= _SHARED_LIMIT else 0
+    if FUSED_DEBUG["stage"] is not None and shared <= 227 * 1024:
+        stage = FUSED_DEBUG["stage"]
+    tail = FUSED_DEBUG["tail"]
+    kernel = _fused_module(warps, nt, stage, tail).kernel(_fused_name(warps, nt, stage, tail))
+    kernel.set_shared(shared if stage else 0)
+    kernel(n // 16, warps * 32,
+           prepared.weight, prepared.scale, x, residual, norm_weight, delta,
+           out_res, out_norm, counter, n, k, batch, prepared.groups, gpw, float(eps))
+    return out_res, out_norm
+
+
+#: Warps per block for the fused add-norm GEMM; each takes a slice of K.
+ADD_NORM_CONFIGS = (4, 8)
 
 
 def gate_up_swiglu(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:

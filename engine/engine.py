@@ -77,6 +77,12 @@ TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
 #: Combine independent Q and K/V normalization, rotation and cache writes.
 FUSE_ROPE = os.environ.get("DRYFT_FUSE_ROPE", "on") == "on"
 
+#: Fold the residual add and RMSNorm into the o and down GEMMs' last block.
+#: Measured: the one block doing the norm for the batch is latency-bound at
+#: about 4 us per row, more than the separate kernel's launch. Off; kept
+#: behind DRYFT_FUSED_ADD_NORM=on for a two-phase redesign.
+FUSED_ADD_NORM = os.environ.get("DRYFT_FUSED_ADD_NORM", "off") == "on"
+
 #: Keys and values cached as INT8 with one fp32 scale per token and head:
 #: 2112 bytes per token per layer instead of 4096. Measured 2 to 4% slower on
 #: every public shape (the attention kernel was already near bandwidth and the
@@ -196,6 +202,8 @@ class Engine:
         self.fused_mlp = None
         self.fused_operand = None
         self.partial_config = {}
+        self.fused_out = {}
+        self.fused_scratch = {}
         self._quick_race = False
         self.kv_int8 = False
 
@@ -444,6 +452,8 @@ class Engine:
         self.fused_mlp = None
         self.fused_operand = None
         self.partial_config = {}
+        self.fused_out = {}
+        self.fused_scratch = {}
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
         if self.quantised is None:
@@ -508,8 +518,72 @@ class Engine:
             self.families = chosen_families
             self._ordinary_matmul = dict(self.matmul)
         self._choose_mlp(batch, chosen_families.get("gate_up", "bf16"))
+        if FUSED_ADD_NORM:
+            for name in ("o", "down"):
+                if chosen_families.get(name) == "fp8":
+                    self._choose_add_norm(name, batch)
         if self.cuda:
             torch.cuda.empty_cache()
+
+    def _choose_add_norm(self, name: str, batch: int) -> None:
+        """Race the GEMM-plus-add-norm kernel against the planes-and-consumer pair.
+
+        The fused kernel folds the residual add and the following RMSNorm into
+        the projection's last block, so the pair of launches becomes one.
+        """
+        from kernels.timing import time_calls
+
+        if not (self.cuda and cuda_fp8 is not None and cuda_fp8.ready()
+                and batch <= 16 and self.hidden == cuda_fp8._FUSED_ROWS):
+            return
+        operands = self.operand[name]
+        norms = ([ly.norm_post for ly in self.layers] if name == "o"
+                 else [ly.norm_in for ly in self.layers[1:]] + [self.norm_out])
+        k = operands[0].k
+        x = torch.randn(batch, k, dtype=torch.bfloat16, device=self.device)
+        residual = torch.randn(batch, self.hidden, dtype=torch.bfloat16, device=self.device)
+        projection = self.matmul[name]
+        config = self.partial_config.get(name)
+
+        def split(pair):
+            weight, norm = pair
+            if config is not None:
+                planes = cuda_fp8.matmul_partials(x, weight, config)
+                return add_rms_norm_partials(residual, planes, norm, self.eps)
+            return add_rms_norm(residual, projection(x, weight), norm, self.eps)
+
+        pairs = list(zip(operands, norms))
+        want_res, want_norm = split(pairs[0])
+        scale_res = want_res.float().abs().max().item() or 1.0
+        scale_norm = want_norm.float().abs().max().item() or 1.0
+        scratch = cuda_fp8.add_norm_scratch(batch, self.hidden, self.device)
+
+        def clock(fn):
+            return time_calls(fn, pairs, use_graph=USE_GRAPH)
+
+        best, chosen = clock(split), None
+        split_ms = best
+        for warps in cuda_fp8.ADD_NORM_CONFIGS:
+            def fused(pair, w=warps):
+                weight, norm = pair
+                return cuda_fp8.matmul_add_norm(x, weight, residual, norm, self.eps, scratch, warps=w)
+            try:
+                got_res, got_norm = fused(pairs[0])
+            except Exception:
+                traceback.print_exc()
+                continue
+            if ((got_res.float() - want_res.float()).abs().max().item() / scale_res > 0.02
+                    or (got_norm.float() - want_norm.float()).abs().max().item() / scale_norm > 0.02
+                    or not torch.isfinite(got_norm).all()):
+                continue
+            elapsed = clock(fused)
+            if elapsed < best * 0.97:
+                best, chosen = elapsed, warps
+        if chosen is not None:
+            self.fused_out[name] = chosen
+            self.fused_scratch[name] = scratch
+        print(f"engine: {name:8s} add-norm fused={chosen}  {split_ms / best:.2f}x vs planes",
+              file=sys.stderr)
 
     def _choose_mlp(self, batch: int, family: str = "bf16") -> None:
         """Race the fused gate/up+SwiGLU kernel against running them apart.
@@ -612,6 +686,12 @@ class Engine:
 
         def add_project_norm(name, index, residual, source, fallback, norm_weight):
             """``residual + project(source)``, then the norm, reducing split-K planes in place."""
+            warps = self.fused_out.get(name) if matmul else None
+            if warps is not None:
+                return cuda_fp8.matmul_add_norm(
+                    source, self.operand[name][index], residual, norm_weight, self.eps,
+                    self.fused_scratch[name], warps=warps,
+                )
             config = self.partial_config.get(name) if matmul else None
             if config is not None:
                 planes = cuda_fp8.matmul_partials(source, self.operand[name][index], config)

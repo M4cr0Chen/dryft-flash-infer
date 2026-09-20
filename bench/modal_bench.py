@@ -59,6 +59,7 @@ image = (
     .add_local_file("bench/gpu_checks.py", "/root/gpu_checks.py")
     .add_local_file("bench/fp8_tuning.py", "/root/fp8_tuning.py")
     .add_local_file("bench/fp8_mma_probe.py", "/root/fp8_mma_probe.py")
+    .add_local_file("bench/fused_probe.py", "/root/fused_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
@@ -198,7 +199,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
-                            check_fp8_mma, check_kv_int8)
+                            check_fp8_mma, check_kv_int8, check_fused_add_norm)
 
     _describe_gpu(require_h100=True)
     check_rope_fusion()
@@ -207,6 +208,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     if candidate_fp8 == "on":
         check_fp8()
         check_fp8_mma()
+        check_fused_add_norm()
     results = {"baseline": [], "candidate": []}
     shapes = list(PUBLIC_SHAPES)
     if long_context:
@@ -1641,8 +1643,19 @@ def kv_checks():
     import sys
 
     sys.path.insert(0, "/root")
-    from gpu_checks import check_kv_int8, check_rope_fusion
+    from gpu_checks import check_kv_int8, check_rope_fusion, check_fused_add_norm
 
     _describe_gpu()
     check_rope_fusion()
     check_kv_int8()
+    check_fused_add_norm()
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def fused_probe():
+    """Time the fused GEMM+add-norm kernel against the two-launch pair."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    subprocess.run([sys.executable, "/root/fused_probe.py"], check=True)

@@ -294,3 +294,43 @@ def check_kv_int8():
                         raise AssertionError(f"INT8 attention b={batch} t={tokens} first={first} {config}: err {err}")
                     cases += 1
     print(f"GPU INT8 cache: {cases} cases passed; max attention error vs dequantised SDPA {worst:.5f}", flush=True)
+
+
+def check_fused_add_norm():
+    """GEMM plus residual add plus RMSNorm in one kernel against the two-launch pair."""
+    import sys
+    import torch
+
+    sys.path.insert(0, "/root/engine")
+    from kernels import cuda_fp8
+    from kernels.norm import add_rms_norm_partials
+
+    if not cuda_fp8.ready():
+        raise AssertionError("cuda_fp8 did not compile")
+    torch.manual_seed(71)
+    n = 2560
+    cases, worst = 0, 0.0
+    for k in (4096, 9728):
+        weight = torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
+        prepared = cuda_fp8.prepare(cuda_fp8.quantize(weight))
+        norm = 1.0 + 0.1 * torch.randn(n, dtype=torch.bfloat16, device="cuda")
+        for batch in (1, 3, 4, 8, 16):
+            x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")
+            residual = torch.randn(batch, n, dtype=torch.bfloat16, device="cuda")
+            planes = cuda_fp8.matmul_partials(x, prepared, (4, 8))
+            want_res, want_norm = add_rms_norm_partials(residual, planes, norm, 1e-6)
+            scratch = cuda_fp8.add_norm_scratch(batch, n, "cuda")
+            for warps in cuda_fp8.ADD_NORM_CONFIGS:
+                for repeat in range(3):   # the ticket counter must reset itself
+                    got_res, got_norm = cuda_fp8.matmul_add_norm(x, prepared, residual, norm, 1e-6,
+                                                                 scratch, warps=warps)
+                    torch.cuda.synchronize()
+                    if int(scratch[1].item()) != 0:
+                        raise AssertionError("ticket counter did not reset")
+                    err_res = (got_res.float() - want_res.float()).abs().max().item() / want_res.float().abs().max().item()
+                    err_norm = (got_norm.float() - want_norm.float()).abs().max().item() / want_norm.float().abs().max().item()
+                    worst = max(worst, err_res, err_norm)
+                    if not torch.isfinite(got_norm).all() or err_res > 1e-2 or err_norm > 1e-2:
+                        raise AssertionError(f"fused add-norm k={k} b={batch} w={warps}: {err_res} {err_norm}")
+                    cases += 1
+    print(f"GPU fused add-norm: {cases} cases; worst relative difference vs planes path {worst:.2e}", flush=True)

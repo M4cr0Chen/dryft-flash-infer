@@ -178,6 +178,35 @@ large channels after RoPE, which a per-token scale cannot resolve; per-channel
 key scaling would fix the accuracy and not the speed. Off by default
 (`DRYFT_KV=int8` to experiment); the GPU checks for it stay.
 
+### Fusing the residual add and RMSNorm into the producing GEMM, rejected
+
+The idea: the o and down GEMMs write no planes; all warps of a block share
+sixteen output rows and split K, reduce through shared memory, and the last
+block (atomic ticket) adds the residual and normalises the batch. 72 launches
+fewer per step. `cuda_fp8.matmul_add_norm` implements it and matches the
+two-launch pair on 60 GPU cases.
+
+Bisected on the o projection (`bench/fused_probe.py`):
+
+| batch | planes GEMM | planes + add-norm kernel | fused GEMM only | + ticket | + tail |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 8.0 us | 11.9 us | 9.0 | 10.0 | 16.7 |
+| 4 | 8.4 | 12.3 | 9.1 | 10.3 | 32.3 |
+| 16 | 9.3 | 13.4 | 15.8 | 16.7 | 84.8 |
+
+The tail costs about 4 us per batch row: one block of 256 threads doing the
+add-norm for 40,960 elements is latency-bound on dependent loads and stores,
+where the separate kernel spends 2.5 us launching and then runs on sixteen
+SMs. Staging the activation per warp was slower than reading B fragments
+from L2, and the direct reads cost 6 us at batch 16. Off by default
+(`DRYFT_FUSED_ADD_NORM=on` races it).
+
+What would work is two-phase: the producer writes the residual and a partial
+sum of squares per block, and the *consuming* GEMM's staging pass finishes
+the norm while it permutes the activation. No serial tail, no planes. The
+ceiling is the add-norm kernel's 2.5 to 3.7 us times 72, about 7% at batch
+1 and 3% at batch 16, for a day of kernel work on the producer's staging.
+
 ### What the platform's aggregate says about the hidden shapes
 
 The run result carries `score` and `metricMs`. Their product is 506.5 in every

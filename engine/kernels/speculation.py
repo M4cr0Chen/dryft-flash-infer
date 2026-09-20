@@ -24,7 +24,7 @@ class ShortVerifier:
         self.configs = {}
         original = {name: getattr(engine, name) for name in
                     ("matmul", "operand", "fused_mlp", "fused_operand", "partial_config",
-                     "decode_attention", "draft")}
+                     "fused_out", "fused_scratch", "decode_attention", "draft")}
         original_position = engine.pos.clone()
         try:
             for draft in range(1, max_draft + 1):
@@ -83,8 +83,8 @@ class ShortVerifier:
         # Eager/CPU path lets tests exercise cache rollback and graph-width
         # dispatch against a real small Qwen model without a GPU.
         names = ("matmul", "operand", "fused_mlp", "fused_operand", "partial_config",
-                 "decode_attention", "draft", "spec_ids", "spec_pred", "offsets",
-                 "spec_positions", "spec_mask")
+                 "fused_out", "fused_scratch", "decode_attention", "draft", "spec_ids",
+                 "spec_pred", "offsets", "spec_positions", "spec_mask")
         original = {name: getattr(self.engine, name) for name in names}
         try:
             for name in names:
