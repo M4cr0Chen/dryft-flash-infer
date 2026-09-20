@@ -79,11 +79,36 @@ engines), `paired-native-int8-final-20260920.json`:
 
 All baseline and candidate samples pass the local gates. Only public-2 enters
 the new path; the other differences are within observed tuning/timing noise.
-The hidden score remains unmeasured for this candidate until its official run.
+### Official result
+
+Commit `0bd7995`, submission `9a16e578-c141-49d3-a274-967abd9a715b`, official
+run `80693a1f-067f-4cb5-a744-f3f5ed69f9ee`: **1177.2915 tok/s, ranked**, all
+workloads passed. This is +15.7 tok/s (+1.35%) over the user's reported best
+1161.6. Official public throughputs were 319.2 / 572.5 / 3542.4 tok/s.
+The run completed in about 7 minutes 18 seconds. The score change is one
+official observation; the paired local studies isolate the MLP's speedup.
+`bench/results/official-native-int8-20260920.json` retains the result.
 
 Direct CLI archive upload now returns HTTP 405; the documented repository-push
 submission path is required. The CLI also needs `DRYFT_API=https://htn.dryft.ai`
 in this installation. No credentials are stored in the repository.
+
+### Follow-up: pre-permuted BF16 activations (prototype only)
+
+`bench/packed_bf16_probe.py` moves activation permutation out of each W8A16
+GEMM block. It checks 42 projection/SwiGLU cases bit-exact against the existing
+kernel at matching weights and reductions. Direct L1 loads help the batch-one
+MLP; a simple shared-memory copy of already-permuted activations is better at
+larger batches. The original fragment arithmetic and weight quantization stay.
+
+The promising kernel-only comparisons are gate/up at batch 1 (24.53 -> 22.42
+us), QKV at batch 16 (13.36 -> 11.74 us), and down at batch 16 (20.90 -> 17.77
+us). These **exclude the cost of packing the activation**. An end-to-end win
+requires producing the layout in the preceding norm/SwiGLU/attention kernel
+and preserving split-K consumer fusion. Batch-32 comparisons can also change
+the incumbent's BF16 weight family to INT8, so they do not isolate layout and
+would need independent accuracy validation. No production changes or score
+claim are made for this prototype. Results: `prepacked-bf16-20260920.json`.
 
 ## 8-bit weights on the tensor cores, every batch, September 19 (evening)
 

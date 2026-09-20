@@ -11,6 +11,7 @@ import modal
 image = (image.add_local_file('bench/next_probe.py', '/root/next_probe.py')
          .add_local_file('bench/w8a8_kernel.py', '/root/w8a8_kernel.py')
          .add_local_file('bench/w8a8_micro.py', '/root/w8a8_micro.py')
+         .add_local_file('bench/packed_bf16_probe.py', '/root/packed_bf16_probe.py')
          .add_local_file('bench/modal_bench.py', '/root/modal_bench.py'))
 app = modal.App('dryft-next-experiments')
 
@@ -20,10 +21,11 @@ def run_probe(stage, shapes, samples):
     import subprocess
     _describe_gpu(require_h100=True)
     results = []
-    if stage == 'micro':
+    if stage in ('micro', 'packed'):
         shapes = [None]
     for shape in shapes:
-        command = ([sys.executable, '/root/w8a8_micro.py'] if stage == 'micro' else
+        command = ([sys.executable, '/root/packed_bf16_probe.py'] if stage == 'packed' else
+                   [sys.executable, '/root/w8a8_micro.py'] if stage == 'micro' else
                    [sys.executable, '/root/next_probe.py', stage, json.dumps(shape), str(samples)])
         process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
         for line in process.stdout:
