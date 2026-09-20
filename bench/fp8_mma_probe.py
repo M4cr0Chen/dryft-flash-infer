@@ -52,6 +52,8 @@ def run(batches):
             # Correctness for every config, including the SwiGLU epilogue.
             worst = 0.0
             for cfg in cuda_fp8.CONFIGS:
+                if not cuda_fp8.applicable(cfg, batch):
+                    continue
                 out = cuda_fp8.matmul(x, prepared[0], config=cfg).float()
                 err = (out - reference).abs().max().item() / scale
                 worst = max(worst, err)
@@ -62,6 +64,8 @@ def run(batches):
                 want = F.silu(reference[:, :inter].to(torch.bfloat16)).to(torch.bfloat16).float() \
                     * reference[:, inter:].to(torch.bfloat16).float()
                 for cfg in cuda_fp8.SWIGLU_CONFIGS:
+                    if not cuda_fp8.applicable(cfg, batch, swiglu=True):
+                        continue
                     got = cuda_fp8.gate_up_swiglu(x, prepared[0], config=cfg).float()
                     err = (got - want).abs().max().item() / (want.abs().max().item() or 1.0)
                     if not torch.isfinite(got).all() or err > 2e-2:
@@ -72,11 +76,16 @@ def run(batches):
             cublas = time_calls(lambda w: F.linear(x, w), weights, reps=reps, trials=trials)
             timings = {}
             for cfg in cuda_fp8.CONFIGS:
+                if not cuda_fp8.applicable(cfg, batch):
+                    continue
                 timings[cfg] = time_calls(
                     lambda p, c=cfg: cuda_fp8.matmul(x, p, config=c), prepared,
                     reps=reps, trials=trials)
             best_cfg = min(timings, key=timings.get)
             best = timings[best_cfg]
+            if name in ("qkv", "gate_up") and batch >= 32:
+                for cfg, ms in sorted(timings.items(), key=lambda kv: kv[1])[:12]:
+                    print(f"    {name} b{batch} {str(cfg):16s} {ms*1e3:7.1f}us", flush=True)
             old = float("inf")
             legacy = [fp8.quantize(w) for w in weights]
             for cfg in fp8.CONFIGS:
@@ -92,7 +101,7 @@ def run(batches):
             if name == "gate_up":
                 sw = {cfg: time_calls(lambda p, c=cfg: cuda_fp8.gate_up_swiglu(x, p, config=c),
                                       prepared, reps=reps, trials=trials)
-                      for cfg in cuda_fp8.SWIGLU_CONFIGS}
+                      for cfg in cuda_fp8.SWIGLU_CONFIGS if cuda_fp8.applicable(cfg, batch, swiglu=True)}
                 swiglu_ms = min(sw.values())
             bf16_bytes = n * k * 2
             fp8_bytes = prepared[0].bytes_moved()
@@ -143,5 +152,4 @@ def norm_variants(batches):
 
 if __name__ == "__main__":
     batches = [int(b) for b in (sys.argv[1].split(",") if len(sys.argv) > 1 else ["1", "4", "16"])]
-    norm_variants(batches)
     print("RESULT_JSON=" + json.dumps(run(batches)), flush=True)

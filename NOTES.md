@@ -147,6 +147,45 @@ verification widths reusing ordinary decode's choice. Load plus warmup is
 **29 / 33 / 32 s** at batches 1 / 4 / 16, throughput unchanged
 (330 / 584 / 3385 tok/s on one sample each).
 
+### Two wide-shape ideas, measured and rejected, September 20
+
+The hidden score implies wide, long workloads (see `score x metricMs`, below),
+so the two levers aimed there went first. Both lost.
+
+**Warps sharing a row block in the 8-bit GEMM**, for batch 32 and up, where the
+single-warp layout holds four tiles of B fragments and falls to 0.86x cuBLAS.
+Two or four warps per row block, each with one or two tiles, were slower on
+every shape at batches 32 and 64 (22.5 vs 17.8 us on qkv at 32): the warps'
+duplicate weight loads both miss L2, and staging the wider activation per
+block costs more than the register relief buys. Batch 32 stays with cuBLAS;
+the machinery stays in `cuda_fp8.py` off the race.
+
+**INT8 keys and values**, one fp32 scale per token and head, dequantised in the
+attention kernel, with a bfloat16 copy for prefill's SDPA. Slower on every
+public shape (-2.1 to -4.4%) and outside the margin on one 16 x 512 sample:
+
+| shape | bf16 cache | INT8 cache | worst gap bf16 -> INT8 |
+| --- | ---: | ---: | --- |
+| 1 x 512 -> 32 | 323.8 | 309.7 | 0.125 -> 0.125 |
+| 4 x 2048 -> 32 | 571.4 | 557.2 | 0.25 -> 0.50 |
+| 16 x 512 -> 128 | 3387.4 | 3287.7 | 1.375 -> **2.75** |
+| 1 x 4096 -> 65 | 242.4 | 237.2 | 0.125 -> 0.125 |
+
+The attention kernel was already near bandwidth, so halving its bytes could
+save at most 0.25 ms of a 3.5 ms step, and the per-tile dequantisation plus
+the copy cost more than that. The gap comes from Qwen's keys having a few
+large channels after RoPE, which a per-token scale cannot resolve; per-channel
+key scaling would fix the accuracy and not the speed. Off by default
+(`DRYFT_KV=int8` to experiment); the GPU checks for it stay.
+
+### What the platform's aggregate says about the hidden shapes
+
+The run result carries `score` and `metricMs`. Their product is 506.5 in every
+run since the first: the score is the geometric mean of tokens per sample over
+the geometric mean of median milliseconds, so the six hidden workloads average
+about 2^9 = 512 tokens per sample against 203 for the public three. They are
+wide or long, which is why the hidden score runs 36% above the public geomean.
+
 The two thirds of the step that is still not projections at batch 16 --
 attention at 0.57 ms, the two add-norms at 0.27 ms, the launch gap at
 0.12 ms -- is the next pool. The batch-32 GEMM is the other.

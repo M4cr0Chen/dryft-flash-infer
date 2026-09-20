@@ -144,6 +144,8 @@ def check_fp8_mma():
             reference = F.linear(x, exact).float()
             scale = reference.abs().max().item()
             for config in cuda_fp8.CONFIGS:
+                if not cuda_fp8.applicable(config, batch):
+                    continue
                 out = cuda_fp8.matmul(x, prepared, config=config).float()
                 err = (out - reference).abs().max().item() / scale
                 if not torch.isfinite(out).all() or err > 1e-2:
@@ -154,6 +156,8 @@ def check_fp8_mma():
                 want = (F.silu(reference[:, :inter].to(torch.bfloat16)).to(torch.bfloat16).float()
                         * reference[:, inter:].to(torch.bfloat16).float())
                 for config in cuda_fp8.SWIGLU_CONFIGS:
+                    if not cuda_fp8.applicable(config, batch, swiglu=True):
+                        continue
                     got = cuda_fp8.gate_up_swiglu(x, prepared, config=config).float()
                     err = (got - want).abs().max().item() / want.abs().max().item()
                     if not torch.isfinite(got).all() or err > 2e-2:
@@ -198,3 +202,95 @@ def check_fp8_mma():
                         raise AssertionError(f"qkv planes rope differs b={batch} {config}")
                     cases += 1
     print(f"GPU FP8 mma: {cases} cases within tolerance; fused plane consumers bit-exact", flush=True)
+
+
+def check_kv_int8():
+    """INT8 cache: the RoPE kernel's quantised writes and the attention kernel's reads."""
+    import sys
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root/engine")
+    from kernels.attention import DecodeAttention
+    from kernels.rope import qkv_norm_rope_to_cache, qkv_planes_norm_rope_to_cache
+
+    torch.manual_seed(61)
+    n_kv, group, dim = 8, 4, 128
+    cases = 0
+    for batch, length in ((1, 1), (4, 1), (2, 9)):
+        capacity = 40
+        qkv = torch.randn(batch * length, 6144, dtype=torch.bfloat16, device="cuda")
+        qn = torch.randn(dim, dtype=torch.bfloat16, device="cuda")
+        kn = torch.randn_like(qn)
+        angles = torch.randn(capacity, dim, device="cuda")
+        cos, sin = angles.cos().bfloat16(), angles.sin().bfloat16()
+        positions = torch.arange(3, 3 + length, device="cuda", dtype=torch.int32)
+        shape = (batch, n_kv, capacity, dim)
+        k16 = torch.zeros(shape, dtype=torch.bfloat16, device="cuda"); v16 = torch.zeros_like(k16)
+        q16 = qkv_norm_rope_to_cache(qkv, 32, 8, qn, kn, cos, sin, positions, length, k16, v16, 1e-6)
+        k8 = torch.zeros(shape, dtype=torch.int8, device="cuda"); v8 = torch.zeros_like(k8)
+        ks = torch.zeros(shape[:-1], dtype=torch.float32, device="cuda"); vs = torch.zeros_like(ks)
+        kc = torch.zeros(batch, n_kv, length, dim, dtype=torch.bfloat16, device="cuda"); vc = torch.zeros_like(kc)
+        q8 = qkv_norm_rope_to_cache(qkv, 32, 8, qn, kn, cos, sin, positions, length, k8, v8, 1e-6,
+                                    k_scale=ks, v_scale=vs, k_copy=kc, v_copy=vc)
+        if not torch.equal(q8, q16):
+            raise AssertionError("INT8 cache path changed Q")
+        # The bfloat16 copy is exactly what the bfloat16 cache would hold.
+        for t, p in enumerate(range(3, 3 + length)):
+            if not (torch.equal(kc[:, :, t], k16[:, :, p]) and torch.equal(vc[:, :, t], v16[:, :, p])):
+                raise AssertionError("bfloat16 copy differs from the bfloat16 cache")
+        # The dequantised cache is within half a step of the bfloat16 cache.
+        for c8, sc, c16, label in ((k8, ks, k16, "K"), (v8, vs, v16, "V")):
+            deq = c8.float() * sc[..., None]
+            written = torch.zeros(capacity, dtype=torch.bool, device="cuda"); written[3:3 + length] = True
+            err = (deq - c16.float())[:, :, written].abs()
+            bound = (sc[:, :, written] * 0.5 + 1e-6)[..., None]
+            if not (err <= bound).all():
+                raise AssertionError(f"INT8 {label} quantisation exceeds half a step")
+        # planes kernel agrees with the direct kernel on both layouts
+        planes = torch.stack([qkv.float() * 0.25, qkv.float() * 0.75])
+        k8b = torch.zeros_like(k8); v8b = torch.zeros_like(v8); ksb = torch.zeros_like(ks); vsb = torch.zeros_like(vs)
+        kcb = torch.zeros_like(kc); vcb = torch.zeros_like(vc)
+        qp = qkv_planes_norm_rope_to_cache(planes, 32, 8, qn, kn, cos, sin, positions, length,
+                                           k8b, v8b, 1e-6, k_scale=ksb, v_scale=vsb, k_copy=kcb, v_copy=vcb)
+        ref = qkv_norm_rope_to_cache(planes.sum(0).to(torch.bfloat16), 32, 8, qn, kn, cos, sin,
+                                     positions, length, k8, v8, 1e-6, k_scale=ks, v_scale=vs, k_copy=kc, v_copy=vc)
+        if not (torch.equal(qp, ref) and torch.equal(k8b, k8) and torch.equal(v8b, v8)
+                and torch.equal(ksb, ks) and torch.equal(vsb, vs) and torch.equal(kcb, kc)):
+            raise AssertionError("planes kernel differs from the direct kernel on the INT8 cache")
+        cases += 1
+
+    # Attention over the INT8 cache against SDPA over the dequantised cache.
+    worst = 0.0
+    for batch in (1, 4):
+        for tokens in (1, 2, 3):
+            capacity = 521
+            q = torch.randn(batch * tokens, n_kv * group * dim, device="cuda", dtype=torch.bfloat16)
+            keys = torch.randn(batch, n_kv, capacity, dim, device="cuda", dtype=torch.bfloat16)
+            values = torch.randn_like(keys)
+            ks = keys.float().abs().amax(-1) / 127.0
+            vs = values.float().abs().amax(-1) / 127.0
+            k8 = torch.round(keys.float() / ks[..., None]).clamp(-127, 127).to(torch.int8)
+            v8 = torch.round(values.float() / vs[..., None]).clamp(-127, 127).to(torch.int8)
+            kd = (k8.float() * ks[..., None]).to(torch.bfloat16)
+            vd = (v8.float() * vs[..., None]).to(torch.bfloat16)
+            for first in (0, 127, capacity - tokens):
+                position = torch.tensor([first], device="cuda", dtype=torch.int32)
+                mask = (torch.arange(first + tokens, device="cuda")[None, :]
+                        <= first + torch.arange(tokens, device="cuda")[:, None])
+                reference = F.scaled_dot_product_attention(
+                    q.view(batch, tokens, n_kv * group, dim).transpose(1, 2),
+                    kd[:, :, :first + tokens].repeat_interleave(group, 1),
+                    vd[:, :, :first + tokens].repeat_interleave(group, 1),
+                    attn_mask=mask,
+                ).transpose(1, 2).reshape(batch * tokens, -1)
+                for config in (None, (1, 64, 4), (4, 128, 4), (16, 64, 4)):
+                    attention = DecodeAttention(batch, n_kv, group, dim, capacity, "cuda",
+                                                tokens=tokens, config=config, quant=True)
+                    actual = attention(q, k8, v8, position, ks, vs)
+                    err = (actual.float() - reference.float()).abs().max().item()
+                    worst = max(worst, err)
+                    if not torch.isfinite(actual).all() or err > 0.02:
+                        raise AssertionError(f"INT8 attention b={batch} t={tokens} first={first} {config}: err {err}")
+                    cases += 1
+    print(f"GPU INT8 cache: {cases} cases passed; max attention error vs dequantised SDPA {worst:.5f}", flush=True)

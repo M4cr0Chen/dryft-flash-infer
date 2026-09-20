@@ -95,10 +95,38 @@ def _kv_kernel(
 
 
 @triton.jit
+def _store_kv(y, value, KC, VC, KS, VS, KB, VB, slot, sslot, bslot, keep, keep_row,
+              QUANT: tl.constexpr, BF16_COPY: tl.constexpr):
+    """Write one block of rotated keys and raw values to the cache.
+
+    ``QUANT`` stores INT8 with one fp32 scale per token and head, symmetric,
+    round to nearest. ``BF16_COPY`` also writes the bfloat16 values to a
+    scratch buffer, which prefill's SDPA reads instead of the cache.
+    """
+    if BF16_COPY:
+        tl.store(KB + bslot, y, mask=keep)
+        tl.store(VB + bslot, value, mask=keep)
+    if QUANT:
+        yf = y.to(tl.float32)
+        vf = value.to(tl.float32)
+        ks = tl.maximum(tl.max(tl.abs(yf), axis=1), 1e-12) / 127.0
+        vs = tl.maximum(tl.max(tl.abs(vf), axis=1), 1e-12) / 127.0
+        kq = tl.minimum(tl.maximum(tl.floor(yf / ks[:, None] + 0.5), -127.0), 127.0)
+        vq = tl.minimum(tl.maximum(tl.floor(vf / vs[:, None] + 0.5), -127.0), 127.0)
+        tl.store(KC + slot, kq.to(tl.int8), mask=keep)
+        tl.store(VC + slot, vq.to(tl.int8), mask=keep)
+        tl.store(KS + sslot, ks, mask=keep_row)
+        tl.store(VS + sslot, vs, mask=keep_row)
+    else:
+        tl.store(KC + slot, y, mask=keep)
+        tl.store(VC + slot, value, mask=keep)
+
+
+@triton.jit
 def _qkv_kernel(
-    QKV, QN, KN, COS, SIN, POS, OUT, KC, VC, T, LMAX, eps,
+    QKV, QN, KN, COS, SIN, POS, OUT, KC, VC, KS, VS, KB, VB, T, LMAX, eps,
     STRIDE: tl.constexpr, D: tl.constexpr, NQ: tl.constexpr, NKV: tl.constexpr,
-    BH: tl.constexpr,
+    BH: tl.constexpr, QUANT: tl.constexpr, BF16_COPY: tl.constexpr,
 ):
     row = tl.program_id(0)
     block = tl.program_id(1)
@@ -125,10 +153,14 @@ def _qkv_kernel(
         tl.store(OUT + row.to(tl.int64) * (NQ * D) + lane + d[None, :], y, mask=keep)
     else:
         sequence = (row // T).to(tl.int64)
-        slot = ((sequence * NKV + heads.to(tl.int64)[:, None]) * LMAX + p) * D + d[None, :]
-        tl.store(KC + slot, y, mask=keep)
+        token = (row % T).to(tl.int64)
+        head_slot = (sequence * NKV + heads.to(tl.int64)[:, None])
+        slot = (head_slot * LMAX + p) * D + d[None, :]
+        sslot = (sequence * NKV + heads.to(tl.int64)) * LMAX + p
+        bslot = (head_slot * T + token) * D + d[None, :]
         value = tl.load(src + NKV * D + d[None, :], mask=keep, other=0.0)
-        tl.store(VC + slot, value, mask=keep)
+        _store_kv(y, value, KC, VC, KS, VS, KB, VB, slot, sslot, bslot, keep,
+                  heads < NKV, QUANT, BF16_COPY)
 
 
 @triton.jit
@@ -142,9 +174,9 @@ def _load_planes(P, ROWS, STRIDE, row, col, mask, SPLITS: tl.constexpr):
 
 @triton.jit
 def _qkv_planes_kernel(
-    P, QN, KN, COS, SIN, POS, OUT, KC, VC, T, LMAX, ROWS, eps,
+    P, QN, KN, COS, SIN, POS, OUT, KC, VC, KS, VS, KB, VB, T, LMAX, ROWS, eps,
     STRIDE: tl.constexpr, D: tl.constexpr, NQ: tl.constexpr, NKV: tl.constexpr,
-    BH: tl.constexpr, SPLITS: tl.constexpr,
+    BH: tl.constexpr, SPLITS: tl.constexpr, QUANT: tl.constexpr, BF16_COPY: tl.constexpr,
 ):
     """``_qkv_kernel`` reading the projection as unreduced split-K planes.
 
@@ -176,41 +208,66 @@ def _qkv_planes_kernel(
         tl.store(OUT + row * (NQ * D) + lane + d[None, :], y, mask=keep)
     else:
         sequence = (row // T).to(tl.int64)
-        slot = ((sequence * NKV + heads.to(tl.int64)[:, None]) * LMAX + p) * D + d[None, :]
-        tl.store(KC + slot, y, mask=keep)
+        token = (row % T).to(tl.int64)
+        head_slot = (sequence * NKV + heads.to(tl.int64)[:, None])
+        slot = (head_slot * LMAX + p) * D + d[None, :]
+        sslot = (sequence * NKV + heads.to(tl.int64)) * LMAX + p
+        bslot = (head_slot * T + token) * D + d[None, :]
         value = _load_planes(P, ROWS, STRIDE, row, base + NKV * D + d[None, :], keep, SPLITS)
-        tl.store(VC + slot, value, mask=keep)
+        _store_kv(y, value, KC, VC, KS, VS, KB, VB, slot, sslot, bslot, keep,
+                  heads < NKV, QUANT, BF16_COPY)
+
+
+def _cache_args(k_cache, v_cache, k_scale, v_scale, k_copy, v_copy):
+    """Pointer arguments and flags for the two cache layouts."""
+    quant = k_scale is not None
+    if quant != (k_cache.dtype == torch.int8):
+        raise ValueError("scales must be given exactly when the cache is INT8")
+    copy = k_copy is not None
+    return (
+        k_cache, v_cache,
+        k_scale if quant else k_cache, v_scale if quant else v_cache,
+        k_copy if copy else k_cache, v_copy if copy else v_cache,
+    ), quant, copy
 
 
 def qkv_planes_norm_rope_to_cache(
     planes, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
-    k_cache, v_cache, eps,
+    k_cache, v_cache, eps, k_scale=None, v_scale=None, k_copy=None, v_copy=None,
 ):
     """``qkv_norm_rope_to_cache`` over fp32 split-K planes ``[splits, rows, width]``."""
     splits, rows, stride = planes.shape
     out = torch.empty((rows, n_q * _HEAD_DIM), dtype=torch.bfloat16, device=planes.device)
     block = min(_HEADS_PER_PROGRAM, n_q, n_kv)
+    caches, quant, copy = _cache_args(k_cache, v_cache, k_scale, v_scale, k_copy, v_copy)
     _qkv_planes_kernel[(rows, triton.cdiv(n_q, block) + triton.cdiv(n_kv, block))](
-        planes, q_weight, k_weight, cos, sin, positions, out, k_cache, v_cache,
+        planes, q_weight, k_weight, cos, sin, positions, out, *caches,
         seq_len, k_cache.shape[2], rows, eps,
         STRIDE=stride, D=_HEAD_DIM, NQ=n_q, NKV=n_kv, BH=block, SPLITS=splits,
-        num_warps=4,
+        QUANT=quant, BF16_COPY=copy, num_warps=4,
     )
     return out
 
 
 def qkv_norm_rope_to_cache(
     qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
-    k_cache, v_cache, eps,
+    k_cache, v_cache, eps, k_scale=None, v_scale=None, k_copy=None, v_copy=None,
 ):
-    """Return Q and write K/V using one launch, preserving both old kernels' casts."""
+    """Return Q and write K/V using one launch, preserving both old kernels' casts.
+
+    ``k_scale``/``v_scale`` (fp32 ``[batch, n_kv, capacity]``) select the INT8
+    cache layout. ``k_copy``/``v_copy`` (bfloat16 ``[batch, n_kv, seq_len, d]``)
+    additionally receive the unquantised values, for prefill's SDPA.
+    """
     rows, stride = qkv.shape
     out = torch.empty((rows, n_q * _HEAD_DIM), dtype=qkv.dtype, device=qkv.device)
     block = min(_HEADS_PER_PROGRAM, n_q, n_kv)
+    caches, quant, copy = _cache_args(k_cache, v_cache, k_scale, v_scale, k_copy, v_copy)
     _qkv_kernel[(rows, triton.cdiv(n_q, block) + triton.cdiv(n_kv, block))](
-        qkv, q_weight, k_weight, cos, sin, positions, out, k_cache, v_cache,
+        qkv, q_weight, k_weight, cos, sin, positions, out, *caches,
         seq_len, k_cache.shape[2], eps,
-        STRIDE=stride, D=_HEAD_DIM, NQ=n_q, NKV=n_kv, BH=block, num_warps=4,
+        STRIDE=stride, D=_HEAD_DIM, NQ=n_q, NKV=n_kv, BH=block,
+        QUANT=quant, BF16_COPY=copy, num_warps=4,
     )
     return out
 

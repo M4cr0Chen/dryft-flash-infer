@@ -81,8 +81,10 @@ def swiglu(gate_up: torch.Tensor) -> torch.Tensor:
 
 def qkv_norm_rope_to_cache(
     qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
-    k_cache, v_cache, eps,
+    k_cache, v_cache, eps, k_scale=None, v_scale=None, k_copy=None, v_copy=None,
 ):
+    if k_scale is not None or k_copy is not None:
+        raise NotImplementedError("the INT8 cache needs the Triton kernels")
     q = q_norm_rope(qkv, n_q, q_weight, cos, sin, positions, seq_len, eps)
     kv_norm_rope_to_cache(
         qkv, n_q * q_weight.shape[0], n_kv, k_weight, cos, sin, positions,
@@ -93,8 +95,10 @@ def qkv_norm_rope_to_cache(
 
 def qkv_planes_norm_rope_to_cache(
     planes, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
-    k_cache, v_cache, eps,
+    k_cache, v_cache, eps, k_scale=None, v_scale=None, k_copy=None, v_copy=None,
 ):
+    if k_scale is not None or k_copy is not None:
+        raise NotImplementedError("the INT8 cache needs the Triton kernels")
     qkv = planes.sum(dim=0).to(torch.bfloat16)
     return qkv_norm_rope_to_cache(
         qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,

@@ -77,6 +77,13 @@ TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
 #: Combine independent Q and K/V normalization, rotation and cache writes.
 FUSE_ROPE = os.environ.get("DRYFT_FUSE_ROPE", "on") == "on"
 
+#: Keys and values cached as INT8 with one fp32 scale per token and head:
+#: 2112 bytes per token per layer instead of 4096. Measured 2 to 4% slower on
+#: every public shape (the attention kernel was already near bandwidth and the
+#: dequantisation is not free) and 2.75 logits off on one 16 x 512 sample, so
+#: it is off. Kept for experiments: DRYFT_KV=int8.
+KV_INT8 = os.environ.get("DRYFT_KV", "bf16") == "int8"
+
 #: Draft tokens verified alongside the confirmed one. 0 disables speculation.
 #: Each pass runs DRAFT+1 positions whatever the draft finds, so the cost per
 #: pass is constant and the step still captures into a CUDA graph.
@@ -190,6 +197,7 @@ class Engine:
         self.fused_operand = None
         self.partial_config = {}
         self._quick_race = False
+        self.kv_int8 = False
 
     def _self_check(self) -> None:
         """Sanity-check the custom path against native Qwen before timing.
@@ -307,9 +315,23 @@ class Engine:
         self.batch, self.seq_len, self.capacity = batch, seq_len, capacity
         self._rope_tables(capacity)
 
+        self.kv_int8 = bool(KV_INT8 and HAVE_TRITON and TRITON_ATTENTION and FUSE_ROPE
+                            and self.cuda)
         shape = (self.n_layers, batch, self.n_kv, capacity, self.head_dim)
-        self.k_cache = torch.zeros(shape, dtype=torch.bfloat16, device=self.device)
-        self.v_cache = torch.zeros(shape, dtype=torch.bfloat16, device=self.device)
+        cache_dtype = torch.int8 if self.kv_int8 else torch.bfloat16
+        self.k_cache = torch.zeros(shape, dtype=cache_dtype, device=self.device)
+        self.v_cache = torch.zeros(shape, dtype=cache_dtype, device=self.device)
+        self.k_scale = self.v_scale = None
+        self.k_copy = self.v_copy = None
+        if self.kv_int8:
+            self.k_scale = torch.zeros(shape[:-1], dtype=torch.float32, device=self.device)
+            self.v_scale = torch.zeros(shape[:-1], dtype=torch.float32, device=self.device)
+            # Prefill's SDPA reads unquantised keys and values for the
+            # sequences of one prefill pass; the cache keeps only INT8.
+            passes = max(1, min(batch, PREFILL_ROW_BUDGET // seq_len))
+            copy_shape = (passes, self.n_kv, seq_len, self.head_dim)
+            self.k_copy = torch.zeros(copy_shape, dtype=torch.bfloat16, device=self.device)
+            self.v_copy = torch.zeros(copy_shape, dtype=torch.bfloat16, device=self.device)
 
         self.arange = torch.arange(capacity, dtype=torch.int32, device=self.device)
         self.pos = torch.zeros(1, dtype=torch.int32, device=self.device)
@@ -360,6 +382,7 @@ class Engine:
             self.decode_attention = DecodeAttention(
                 batch, self.n_kv, self.n_q // self.n_kv, self.head_dim,
                 capacity, self.device, tokens=(self.draft + 1) if self.draft else 1,
+                quant=self.kv_int8,
             )
 
         self._capture()
@@ -525,6 +548,8 @@ class Engine:
         split = clock(lambda w: swiglu(projection(x, w)), self.operand["gate_up"])
         best, chosen = split, None
         for config in configs:
+            if family == "fp8" and not cuda_fp8.applicable(config, batch, swiglu=True):
+                continue
             runner = (lambda w, c=config: fused(x, w, config=c))
             try:
                 out = runner(operands[0])
@@ -551,6 +576,7 @@ class Engine:
             self.decode_attention = self.decode_attention.tuned(
                 self.k_cache, self.v_cache, self.seq_len,
                 self.capacity - CAPACITY_SLACK - 1, use_graph=USE_GRAPH,
+                key_scales=self.k_scale, value_scales=self.v_scale,
             )
         step = self._spec_step if self.draft else self._decode_step
         for _ in range(2):
@@ -593,22 +619,33 @@ class Engine:
             return add_rms_norm(residual, project(name, index, source, fallback),
                                 norm_weight, self.eps)
 
+        # With the INT8 cache the RoPE kernel also needs the scale slots and,
+        # during prefill, the bfloat16 copy that SDPA reads.
+        cache_kwargs = {}
+        if self.kv_int8:
+            prefill = attend == self._attend_prefill  # bound methods: never ``is``
+            cache_kwargs["k_copy"] = self.k_copy[:batch] if prefill else None
+            cache_kwargs["v_copy"] = self.v_copy[:batch] if prefill else None
+
         normed = rms_norm(x, self.layers[0].norm_in, self.eps)
         for index, layer in enumerate(self.layers):
             kc = self.k_cache[index].narrow(0, offset, batch)
             vc = self.v_cache[index].narrow(0, offset, batch)
+            if cache_kwargs:
+                cache_kwargs["k_scale"] = self.k_scale[index].narrow(0, offset, batch)
+                cache_kwargs["v_scale"] = self.v_scale[index].narrow(0, offset, batch)
             qkv_config = self.partial_config.get("qkv") if matmul else None
             if qkv_config is not None:
                 planes = cuda_fp8.matmul_partials(normed, self.operand["qkv"][index], qkv_config)
                 q = qkv_planes_norm_rope_to_cache(
                     planes, self.n_q, self.n_kv, layer.q_norm, layer.k_norm,
-                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
+                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps, **cache_kwargs,
                 )
             elif FUSE_ROPE:
                 qkv = project("qkv", index, normed, layer.qkv)
                 q = qkv_norm_rope_to_cache(
                     qkv, self.n_q, self.n_kv, layer.q_norm, layer.k_norm,
-                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
+                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps, **cache_kwargs,
                 )
             else:
                 qkv = project("qkv", index, normed, layer.qkv)
@@ -636,8 +673,14 @@ class Engine:
 
     def _attend_prefill(self, q, index, batch, offset, seq_len):
         q = q.view(batch, seq_len, self.n_q, self.head_dim).transpose(1, 2)
-        k = self.k_cache[index].narrow(0, offset, batch)[:, :, :seq_len, :]
-        v = self.v_cache[index].narrow(0, offset, batch)[:, :, :seq_len, :]
+        if self.kv_int8:
+            # The RoPE kernel just wrote this pass's keys and values here in
+            # bfloat16, alongside the INT8 cache the decode steps will read.
+            k = self.k_copy[:batch]
+            v = self.v_copy[:batch]
+        else:
+            k = self.k_cache[index].narrow(0, offset, batch)[:, :, :seq_len, :]
+            v = self.v_cache[index].narrow(0, offset, batch)[:, :, :seq_len, :]
         if self._enable_gqa:
             out = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
         else:
@@ -648,12 +691,19 @@ class Engine:
             )
         return out.transpose(1, 2).reshape(batch * seq_len, self.q_width)
 
+    def _cache_scales(self, index):
+        if self.kv_int8:
+            return self.k_scale[index], self.v_scale[index]
+        return None, None
+
     def _attend_decode(self, q, index, batch, offset, seq_len):
         group = self.n_q // self.n_kv
         if self.decode_attention is not None:
             return self.decode_attention(
-                q, self.k_cache[index], self.v_cache[index], self.pos
+                q, self.k_cache[index], self.v_cache[index], self.pos, *self._cache_scales(index)
             )
+        if self.kv_int8:
+            raise RuntimeError("the INT8 cache needs the Triton decode attention")
         grouped = q.view(batch, self.n_kv, group, self.head_dim)
         # Fallback. Query head h reads KV head h // 4, so the four heads of a
         # group become four query positions against that group's cache: the
@@ -711,8 +761,10 @@ class Engine:
         """Attention over the draft block: query t may read keys 0..pos+t."""
         if self.decode_attention is not None:
             return self.decode_attention(
-                q, self.k_cache[index], self.v_cache[index], self.pos
+                q, self.k_cache[index], self.v_cache[index], self.pos, *self._cache_scales(index)
             )
+        if self.kv_int8:
+            raise RuntimeError("the INT8 cache needs the Triton decode attention")
         group = self.n_q // self.n_kv
         width = self.draft + 1
         grouped = q.view(width, self.n_kv, group, self.head_dim).permute(1, 0, 2, 3)

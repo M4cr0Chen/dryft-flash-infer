@@ -186,7 +186,8 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def compare_benchmark(samples: int = 5, corpus: bool = True,
                       candidate_fp8: str = "on", short_draft: int = 2,
-                      long_context: bool = False):
+                      long_context: bool = False, candidate_kv: str = "bf16",
+                      baseline_fp8: str = "off"):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -197,11 +198,12 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
-                            check_fp8_mma)
+                            check_fp8_mma, check_kv_int8)
 
     _describe_gpu(require_h100=True)
     check_rope_fusion()
     check_attention_dispatch()
+    check_kv_int8()
     if candidate_fp8 == "on":
         check_fp8()
         check_fp8_mma()
@@ -212,8 +214,9 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     for index, shape in enumerate(shapes):
         order = ["baseline", "candidate"] if index % 2 == 0 else ["candidate", "baseline"]
         for label in order:
-            os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else "off"
-            os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft if label == "candidate" else 0)
+            os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else baseline_fp8
+            os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
+            os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
             rows = run_isolated(
@@ -228,7 +231,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
 @app.local_entrypoint()
 def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json",
             candidate_fp8: str = "on", short_draft: int = 2,
-            long_context: bool = False):
+            long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off"):
     import hashlib
     import json
     import subprocess
@@ -252,13 +255,14 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "candidate_sha256": fingerprint("engine"),
         "baseline_sha256": fingerprint(BASELINE_DIR),
         "samples": samples, "corpus": corpus,
-        "baseline_fp8": False, "candidate_fp8": candidate_fp8,
+        "baseline_fp8": baseline_fp8, "candidate_fp8": candidate_fp8, "candidate_kv": candidate_kv,
         "candidate_short_draft": short_draft,
         "long_context": long_context,
     }
     results = compare_benchmark.remote(samples=samples, corpus=corpus,
                                        candidate_fp8=candidate_fp8, short_draft=short_draft,
-                                       long_context=long_context)
+                                       long_context=long_context, candidate_kv=candidate_kv,
+                                       baseline_fp8=baseline_fp8)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -1607,8 +1611,8 @@ def variants(shape: str = "public-2", samples: int = 5,
         chosen = [("coverage-long", 1, 4096, 65)]
     rows = {}
     for label in configs.split(";"):
-        env = {"DRYFT_FP8": "on", "DRYFT_FP8_LM_HEAD": "on", "DRYFT_ATTENTION_TUNE": "on",
-               "DRYFT_SHORT_DRAFT": "0"}
+        env = {"DRYFT_FP8": "on", "DRYFT_FP8_LM_HEAD": "on", "DRYFT_ATTENTION_TUNE": "off",
+               "DRYFT_SHORT_DRAFT": "0", "DRYFT_KV": "bf16", "DRYFT_FP8_PROJECTIONS": "qkv,o,gate_up,down,lm_head"}
         for item in label.split(","):
             if item == "lm_head=off":
                 env["DRYFT_FP8_LM_HEAD"] = "off"
@@ -1618,6 +1622,8 @@ def variants(shape: str = "public-2", samples: int = 5,
                 env["DRYFT_FP8"] = "off"
             elif item.startswith("only="):
                 env["DRYFT_FP8_PROJECTIONS"] = item.removeprefix("only=").replace("+", ",")
+            elif item.startswith("kv="):
+                env["DRYFT_KV"] = item.removeprefix("kv=")
         os.environ.update(env)
         print(f"\nVARIANT {label}: {env}", flush=True)
         rows[label] = run_isolated(WEIGHTS, shapes=chosen, samples=samples,
@@ -1627,3 +1633,16 @@ def variants(shape: str = "public-2", samples: int = 5,
         gaps = " ".join(f"{s['tie_gap']:.3f}" for s in row["sample_metrics"])
         print(f"{label:24s} {row['tps']:8.1f}  {row['tie_gap']:8.4f}  {row['load_warmup_seconds']:9.1f}s  {gaps}", flush=True)
     return rows
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def kv_checks():
+    """The INT8 cache kernels against their bfloat16 counterparts."""
+    import sys
+
+    sys.path.insert(0, "/root")
+    from gpu_checks import check_kv_int8, check_rope_fusion
+
+    _describe_gpu()
+    check_rope_fusion()
+    check_kv_int8()

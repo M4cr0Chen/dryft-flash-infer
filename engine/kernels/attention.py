@@ -11,6 +11,10 @@ and the whole thing captures into a CUDA graph.
 
 Numerics follow the SDPA kernels the reference dispatches to: fp32 softmax and
 accumulator, the probability-by-value product in bfloat16.
+
+With ``QUANT`` the cache holds INT8 keys and values with one fp32 scale per
+token and head; each tile is dequantised to bfloat16 as it is loaded, and the
+arithmetic after that is unchanged.
 """
 
 import sys
@@ -25,10 +29,10 @@ _PAD_M = 16  # tl.dot wants at least 16 rows; a KV group only has four
 
 @triton.jit
 def _split_kernel(
-    Q, K, V, POS, PACC, PM, PL, OUT, scale, NQ,
+    Q, K, V, KS, VS, POS, PACC, PM, PL, OUT, scale, NQ,
     LMAX: tl.constexpr, SPLIT: tl.constexpr, SPLITS: tl.constexpr,
     GROUP: tl.constexpr, D: tl.constexpr, BLOCK_N: tl.constexpr, PAD_M: tl.constexpr,
-    TOKENS: tl.constexpr, NKV: tl.constexpr, DIRECT: tl.constexpr,
+    TOKENS: tl.constexpr, NKV: tl.constexpr, DIRECT: tl.constexpr, QUANT: tl.constexpr,
 ):
     head = tl.program_id(0)  # batch * n_kv_heads + kv_head
     part = tl.program_id(1)
@@ -60,12 +64,21 @@ def _split_kernel(
     acc = tl.zeros((PAD_M, D), tl.float32)
 
     base = head.to(tl.int64) * (LMAX * D)
+    sbase = head.to(tl.int64) * LMAX
     for offset in range(start, stop, BLOCK_N):
         keys = offset + tl.arange(0, BLOCK_N)
         keep = keys < stop
         block = base + keys[:, None] * D + dims[None, :]
-        k = tl.load(K + block, mask=keep[:, None], other=0.0)
-        v = tl.load(V + block, mask=keep[:, None], other=0.0)
+        if QUANT:
+            ks = tl.load(KS + sbase + keys, mask=keep, other=0.0)
+            vs = tl.load(VS + sbase + keys, mask=keep, other=0.0)
+            k = (tl.load(K + block, mask=keep[:, None], other=0).to(tl.float32)
+                 * ks[:, None]).to(tl.bfloat16)
+            v = (tl.load(V + block, mask=keep[:, None], other=0).to(tl.float32)
+                 * vs[:, None]).to(tl.bfloat16)
+        else:
+            k = tl.load(K + block, mask=keep[:, None], other=0.0)
+            v = tl.load(V + block, mask=keep[:, None], other=0.0)
 
         scores = tl.dot(q, tl.trans(k)) * scale
         # Causal within the draft block as well as against the cache.
@@ -169,9 +182,9 @@ class DecodeAttention:
     """
 
     def __init__(self, batch, n_kv, group, head_dim, capacity, device, tokens=1,
-                 config=None):
+                 config=None, quant=False):
         self.batch, self.n_kv, self.group, self.head_dim = batch, n_kv, group, head_dim
-        self.capacity, self.tokens = capacity, tokens
+        self.capacity, self.tokens, self.quant = capacity, tokens, quant
         self.n_q = n_kv * group
         self.scale = head_dim**-0.5
         self.splits, self.split_len = plan_splits(capacity, batch, n_kv)
@@ -198,7 +211,8 @@ class DecodeAttention:
         )
 
     @torch.no_grad()
-    def tuned(self, keys, values, first_position, last_position, use_graph=True):
+    def tuned(self, keys, values, first_position, last_position, use_graph=True,
+              key_scales=None, value_scales=None):
         """Race a bounded set of layouts once, before capturing model decode.
 
         Sweep every layer's cache at both ends of generation. Selection depends
@@ -210,23 +224,26 @@ class DecodeAttention:
         q = torch.randn(self.batch * self.tokens, self.n_q * self.head_dim,
                         dtype=torch.bfloat16, device=self.out.device)
         pos = torch.tensor([first_position], dtype=torch.int32, device=self.out.device)
-        operands = list(zip(keys, values))
+        if self.quant:
+            operands = list(zip(keys, values, key_scales, value_scales))
+        else:
+            operands = list(zip(keys, values))
         positions = sorted(set((first_position, last_position)))
         references = []
         for value in positions:
             pos.fill_(value)
-            references.append(self(q, *operands[0], pos).clone())
+            references.append(self(q, operands[0][0], operands[0][1], pos, *operands[0][2:]).clone())
 
         def measure(candidate):
             elapsed = 0.0
             for value, reference in zip(positions, references):
                 pos.fill_(value)
-                actual = candidate(q, *operands[0], pos)
+                actual = candidate(q, operands[0][0], operands[0][1], pos, *operands[0][2:])
                 if (not torch.isfinite(actual).all().item()
                         or (actual.float() - reference.float()).abs().max().item() > 0.04):
                     return float("inf")
-                elapsed += time_calls(lambda kv: candidate(q, *kv, pos), operands,
-                                      reps=1, trials=3, use_graph=use_graph)
+                elapsed += time_calls(lambda kv: candidate(q, kv[0], kv[1], pos, *kv[2:]),
+                                      operands, reps=1, trials=3, use_graph=use_graph)
             return elapsed / len(positions)
 
         incumbent = measure(self)
@@ -236,7 +253,7 @@ class DecodeAttention:
         for config in configs:
             candidate = DecodeAttention(self.batch, self.n_kv, self.group,
                                         self.head_dim, self.capacity, self.out.device,
-                                        tokens=self.tokens, config=config)
+                                        tokens=self.tokens, config=config, quant=self.quant)
             trial = measure(candidate)
             if trial < elapsed:
                 best, elapsed, chosen = candidate, trial, config
@@ -246,15 +263,24 @@ class DecodeAttention:
               f"{incumbent / elapsed:.2f}x vs original", file=sys.stderr)
         return best
 
-    def __call__(self, q, k_cache, v_cache, pos):
-        """``q`` is ``[batch * tokens, n_q * head_dim]``; caches ``[batch, n_kv, cap, d]``."""
+    def __call__(self, q, k_cache, v_cache, pos, k_scale=None, v_scale=None):
+        """``q`` is ``[batch * tokens, n_q * head_dim]``; caches ``[batch, n_kv, cap, d]``.
+
+        With ``quant`` the caches are INT8 and ``k_scale``/``v_scale`` are the
+        fp32 ``[batch, n_kv, cap]`` scales.
+        """
         heads = self.batch * self.n_kv
+        if self.quant != (k_scale is not None):
+            raise ValueError("scales must be given exactly when the cache is quantised")
         _split_kernel[(heads, self.splits)](
-            q, k_cache, v_cache, pos, self.acc, self.peak, self.total, self.out, self.scale,
+            q, k_cache, v_cache,
+            k_scale if self.quant else k_cache, v_scale if self.quant else v_cache,
+            pos, self.acc, self.peak, self.total, self.out, self.scale,
             self.n_q,
             LMAX=self.capacity, SPLIT=self.split_len, SPLITS=self.splits,
             GROUP=self.group, D=self.head_dim, BLOCK_N=self.block_n, PAD_M=self.pad_m,
-            TOKENS=self.tokens, NKV=self.n_kv, DIRECT=self.direct, num_warps=self.warps,
+            TOKENS=self.tokens, NKV=self.n_kv, DIRECT=self.direct, QUANT=self.quant,
+            num_warps=self.warps,
         )
         if self.direct:
             return self.out

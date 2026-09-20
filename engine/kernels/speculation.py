@@ -33,7 +33,7 @@ class ShortVerifier:
                 engine._choose_matmuls(width, families=engine.families)
                 engine.decode_attention = (DecodeAttention(
                     1, engine.n_kv, engine.n_q // engine.n_kv, engine.head_dim,
-                    engine.capacity, engine.device, tokens=width,
+                    engine.capacity, engine.device, tokens=width, quant=engine.kv_int8,
                 ) if original["decode_attention"] is not None else None)
                 engine.spec_ids = torch.zeros(1, width, device=engine.device, dtype=torch.int64)
                 engine.spec_pred = torch.zeros(width, device=engine.device, dtype=torch.int64)

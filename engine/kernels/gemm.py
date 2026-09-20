@@ -183,6 +183,8 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 3, packed=None,
 
         if cuda_fp8.ready():
             for cfg in (cuda_fp8.CONFIGS[:1] if quick else cuda_fp8.CONFIGS):
+                if not cuda_fp8.applicable(cfg, batch):
+                    continue
                 runner = functools.partial(cuda_fp8.matmul, config=cfg)
                 try:
                     # This projection check catches gross implementation errors.

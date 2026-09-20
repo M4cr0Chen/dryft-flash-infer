@@ -128,13 +128,17 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     const int g = lane >> 2;
     const int t = lane & 3;
 
+    // @NSHARE@ warps share one row block and split the activation tiles
+    // between them; the weights they both need come from L2 the second time.
+    const int rowgroup = warp / @NSHARE@;
+    const int n0 = (warp % @NSHARE@) * (@NT@ * 8);
 #if @MODE@ == 2
-    const int i0 = (rowblock * @WARPS@ + warp) * 8;
+    const int i0 = (rowblock * (@WARPS@ / @NSHARE@) + rowgroup) * 8;
     const bool live = i0 < N;
     const int row_lo = live ? i0 + g : 0;
     const int row_hi = live ? N + i0 + g : 0;
 #else
-    const int rb = (rowblock * @WARPS@ + warp) * 16;
+    const int rb = (rowblock * (@WARPS@ / @NSHARE@) + rowgroup) * 16;
     const bool live = rb < N;
     const int row_lo = live ? rb + g : 0;
     const int row_hi = live ? rb + 8 + g : 0;
@@ -170,7 +174,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     // load-store-load loop would serialise on L2 latency instead.
     {
         const int nblk = ngroups * 2;                 // 64-wide blocks in the chunk
-        const int items = @NT@ * 8 * nblk * 8;        // eight 16-byte pieces per block row
+        const int items = @NT@ * @NSHARE@ * 8 * nblk * 8;   // eight 16-byte pieces per block row
         for (int base = threadIdx.x; base < items; base += @THREADS@ * 8) {
             uint4 v[8];
             #pragma unroll
@@ -250,7 +254,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
                     #pragma unroll
                     for (int nt = 0; nt < @NT@; ++nt) {
                         const uint4* src = reinterpret_cast<const uint4*>(
-                            xs + (nt * 8 + g) * stride + local * 128 + j * 64 + t * 16);
+                            xs + (n0 + nt * 8 + g) * stride + local * 128 + j * 64 + t * 16);
                         xb[nt][0] = src[0];
                         xb[nt][1] = src[1];
                     }
@@ -259,7 +263,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
                     // 4-byte L1-resident loads per tile, no staging pass.
                     #pragma unroll
                     for (int nt = 0; nt < @NT@; ++nt) {
-                        const int n = nt * 8 + g;
+                        const int n = n0 + nt * 8 + g;
                         const bf16* xrow = X + (size_t)n * K + k0 + local * 128 + j * 64 + 2 * t;
                         u32 v[8];
                         #pragma unroll
@@ -311,7 +315,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     for (int nt = 0; nt < @NT@; ++nt) {
         #pragma unroll
         for (int c = 0; c < 2; ++c) {
-            const int n = nt * 8 + 2 * t + c;
+            const int n = n0 + nt * 8 + 2 * t + c;
             if (n < B) {
                 out[(size_t)n * N + row_lo] = f32_to_bf16(acc[nt][c]);
                 out[(size_t)n * N + row_hi] = f32_to_bf16(acc[nt][2 + c]);
@@ -324,7 +328,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     for (int nt = 0; nt < @NT@; ++nt) {
         #pragma unroll
         for (int c = 0; c < 2; ++c) {
-            const int n = nt * 8 + 2 * t + c;
+            const int n = n0 + nt * 8 + 2 * t + c;
             if (n < B) {
                 out[(size_t)n * N + row_lo] = acc[nt][c];
                 out[(size_t)n * N + row_hi] = acc[nt][2 + c];
@@ -339,7 +343,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
     for (int nt = 0; nt < @NT@; ++nt) {
         #pragma unroll
         for (int c = 0; c < 2; ++c) {
-            const int n = nt * 8 + 2 * t + c;
+            const int n = n0 + nt * 8 + 2 * t + c;
             if (n < B) {
                 const float gb = bf16_to_f32(f32_to_bf16(acc[nt][c]));
                 const float ub = bf16_to_f32(f32_to_bf16(acc[nt][2 + c]));
@@ -375,28 +379,34 @@ _MODES = (0, 1, 2)
 _STAGES = (1,)
 
 
-def _name(warps: int, nt: int, mode: int, stage: int = 1) -> str:
-    return f"fp8_mma_w{warps}_n{nt}_m{mode}_s{stage}"
+def _name(warps: int, nt: int, mode: int, stage: int = 1, nshare: int = 1) -> str:
+    return f"fp8_mma_w{warps}_n{nt}_m{mode}_s{stage}_r{nshare}"
 
 
-def _source(nt: int) -> str:
-    """Every warp count and epilogue for one activation tile count.
+_NSHARES = (1, 2, 4)
+
+
+def _source(nt: int, nshare: int) -> str:
+    """Every warp count and epilogue for one tile count and row-block sharing.
 
     A process serves one batch size (plus its verification widths, which
     share the tile count up to eight rows), so compiling the other tile counts
     would spend load budget on kernels that never launch.
     """
     parts = [_PRELUDE]
-    if nt == _NTS[0]:
+    if (nt, nshare) == (_NTS[0], 1):
         parts.append(_REDUCE)
     for warps in _WARPS:
+        if warps % nshare:
+            continue
         for mode in _MODES:
             for stage in _STAGES:
                 parts.append(
-                    _TEMPLATE.replace("@NAME@", _name(warps, nt, mode, stage))
+                    _TEMPLATE.replace("@NAME@", _name(warps, nt, mode, stage, nshare))
                     .replace("@WARPS@", str(warps))
                     .replace("@THREADS@", str(warps * 32))
                     .replace("@NT@", str(nt))
+                    .replace("@NSHARE@", str(nshare))
                     .replace("@MODE@", str(mode))
                     .replace("@STAGE@", str(stage))
                 )
@@ -407,10 +417,10 @@ _modules = {}
 _ready = None
 
 
-def _module_for(nt: int):
-    if nt not in _modules:
-        _modules[nt] = cuda_jit.Module(_source(nt))
-    return _modules[nt]
+def _module_for(nt: int, nshare: int = 1):
+    if (nt, nshare) not in _modules:
+        _modules[(nt, nshare)] = cuda_jit.Module(_source(nt, nshare))
+    return _modules[(nt, nshare)]
 
 
 def ready() -> bool:
@@ -418,7 +428,7 @@ def ready() -> bool:
     global _ready
     if _ready is None:
         try:
-            _module_for(_NTS[0]).kernel("reduce_partials")
+            _module_for(_NTS[0], 1).kernel("reduce_partials")
             _ready = True
         except Exception as exc:
             print(f"cuda_fp8: unavailable ({type(exc).__name__}: {exc})"[:400])
@@ -497,15 +507,18 @@ def prepare(packed) -> Prepared:
     return Prepared(weight, scale)
 
 
-def _ntiles(batch: int) -> int:
+def _ntiles(batch: int, nshare: int = 1) -> int:
+    """Tiles per warp when ``nshare`` warps split the batch's tiles."""
+    tiles = -(-batch // 8)
+    per_warp = -(-tiles // nshare)
     for nt in _NTS:
-        if batch <= nt * 8:
+        if per_warp <= nt:
             return nt
-    raise ValueError(f"batch {batch} exceeds {_NTS[-1] * 8} rows")
+    raise ValueError(f"batch {batch} exceeds {_NTS[-1] * 8 * nshare} rows")
 
 
-def _shared_bytes(nt: int, gps: int) -> int:
-    return nt * 8 * (gps * 128 + 8) * 2
+def _shared_bytes(nt: int, gps: int, nshare: int = 1) -> int:
+    return nt * nshare * 8 * (gps * 128 + 8) * 2
 
 
 #: Hopper allows up to 227 KiB of dynamic shared memory per block.
@@ -513,34 +526,37 @@ _SHARED_LIMIT = 200 * 1024
 
 
 def _plan(prepared: Prepared, batch: int, config):
-    """Resolve ``(warps, splitk[, stage])`` into a launch, growing split-K to fit shared."""
+    """Resolve ``(warps, splitk[, stage[, nshare]])`` into a launch, growing split-K to fit shared."""
     warps, splitk = config[0], config[1]
     stage = config[2] if len(config) > 2 else 1
-    nt = _ntiles(batch)
+    nshare = config[3] if len(config) > 3 else 1
+    if warps % nshare:
+        raise ValueError("warps sharing a row block must divide the block's warps")
+    nt = _ntiles(batch, nshare)
     groups = prepared.groups
     if splitk == "pairs":
         splitk = -(-groups // 2)
     splitk = max(1, min(splitk, groups))
     gps = -(-groups // splitk)
     if stage:
-        while _shared_bytes(nt, gps) > _SHARED_LIMIT and gps > 1:
+        while _shared_bytes(nt, gps, nshare) > _SHARED_LIMIT and gps > 1:
             splitk += 1
             gps = -(-groups // splitk)
     splitk = -(-groups // gps)
-    return warps, nt, splitk, gps, stage
+    return warps, nt, splitk, gps, stage, nshare
 
 
 def _launch(mode, prepared, x, out, n_eff, config):
     batch, k = x.shape
     if k != prepared.k:
         raise ValueError("activation width does not match the weight")
-    warps, nt, splitk, gps, stage = _plan(prepared, batch, config)
+    warps, nt, splitk, gps, stage, nshare = _plan(prepared, batch, config)
     if mode == 2 and splitk != 1:
         raise ValueError("the SwiGLU epilogue needs the whole reduction in one block")
-    rows_per_block = warps * (8 if mode == 2 else 16)
+    rows_per_block = (warps // nshare) * (8 if mode == 2 else 16)
     rowblocks = -(-n_eff // rows_per_block)
-    kernel = _module_for(nt).kernel(_name(warps, nt, mode, stage))
-    kernel.set_shared(_shared_bytes(nt, gps) if stage else 0)
+    kernel = _module_for(nt, nshare).kernel(_name(warps, nt, mode, stage, nshare))
+    kernel.set_shared(_shared_bytes(nt, gps, nshare) if stage else 0)
     kernel(rowblocks * splitk, warps * 32,
            prepared.weight, prepared.scale, x, out,
            n_eff, k, batch, prepared.groups, gps, splitk)
@@ -555,24 +571,24 @@ def splits(prepared: Prepared, batch: int, config=(4, 1)) -> int:
 def matmul_partials(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:
     """``x @ W.T`` as fp32 split-K planes ``[splits, B, N]``; sum them to finish."""
     batch = x.shape[0]
-    warps, nt, splitk, gps, stage = _plan(prepared, batch, config)
+    warps, nt, splitk, gps, stage, nshare = _plan(prepared, batch, config)
     out = torch.empty((splitk, batch, prepared.rows), dtype=torch.float32, device=x.device)
-    _launch(1, prepared, x, out, prepared.rows, (warps, splitk, stage))
+    _launch(1, prepared, x, out, prepared.rows, (warps, splitk, stage, nshare))
     return out
 
 
 def matmul(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:
     """``x @ W.T`` in bfloat16, ``x`` of shape ``[B, K]`` with ``B <= 64``."""
     batch = x.shape[0]
-    warps, nt, splitk, gps, stage = _plan(prepared, batch, config)
+    warps, nt, splitk, gps, stage, nshare = _plan(prepared, batch, config)
     out = torch.empty((batch, prepared.rows), dtype=torch.bfloat16, device=x.device)
     if splitk == 1:
-        _launch(0, prepared, x, out, prepared.rows, (warps, 1, stage))
+        _launch(0, prepared, x, out, prepared.rows, (warps, 1, stage, nshare))
         return out
     partial = torch.empty((splitk, batch, prepared.rows), dtype=torch.float32, device=x.device)
-    _launch(1, prepared, x, partial, prepared.rows, (warps, splitk, stage))
+    _launch(1, prepared, x, partial, prepared.rows, (warps, splitk, stage, nshare))
     width = batch * prepared.rows
-    reduce = _module_for(_NTS[0]).kernel("reduce_partials")
+    reduce = _module_for(_NTS[0], 1).kernel("reduce_partials")
     reduce(-(-width // 256), 256, partial, out, width, splitk)
     return out
 
@@ -583,7 +599,8 @@ def gate_up_swiglu(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.
     inter = prepared.rows // 2
     out = torch.empty((batch, inter), dtype=torch.bfloat16, device=x.device)
     stage = config[2] if len(config) > 2 else 1
-    _launch(2, prepared, x, out, inter, (config[0], 1, stage))
+    nshare = config[3] if len(config) > 3 else 1
+    _launch(2, prepared, x, out, inter, (config[0], 1, stage, nshare))
     return out
 
 
@@ -599,5 +616,18 @@ _BASE = [
     (4, 2), (4, 4), (4, 8), (4, 16),
     (2, 8), (1, 8),
 ]
-CONFIGS = [(w, k, 1) for w, k in _BASE]
-SWIGLU_CONFIGS = [(w, 1, 1) for w in (4, 8)]
+CONFIGS = [(w, k, 1, 1) for w, k in _BASE]
+# Two or four warps sharing a row block (``nshare`` > 1) were measured at
+# batches 32 and 64 and lost to the single-warp layout on every shape: the
+# warps' duplicate weight loads both miss L2, and staging the wider activation
+# per block costs more than the register relief buys. The machinery stays for
+# experiments; the race does not spend warmup on it.
+SWIGLU_CONFIGS = [(w, 1, 1, 1) for w in (4, 8)]
+
+
+def applicable(config, batch: int, swiglu: bool = False) -> bool:
+    """Whether a config is worth racing for this batch: sharing needs tiles to split."""
+    nshare = config[3] if len(config) > 3 else 1
+    if swiglu and config[1] != 1:
+        return False
+    return nshare == 1 or -(-batch // 8) >= nshare
