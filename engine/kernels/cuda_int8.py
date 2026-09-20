@@ -104,7 +104,7 @@ class Prepared:
         natural = (p // 16) * 4 + ((p % 16) // 4) * 16 + p % 4
         old = ((natural % 8) // 2) * 16 + (natural // 16) * 4 + ((natural % 16) // 8) * 2 + natural % 2
         cols = (torch.arange(self.k // 64, device=p.device)[:, None] * 64 + old[None, :]).flatten()
-        self.weight = (source.weight[:, cols] ^ 128).contiguous()
+        self.weight = (source.row_major()[:, cols] ^ 128).contiguous()
         self.scale = source.scale
 
 

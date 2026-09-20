@@ -60,6 +60,9 @@ image = (
     .add_local_file("bench/fp8_tuning.py", "/root/fp8_tuning.py")
     .add_local_file("bench/fp8_mma_probe.py", "/root/fp8_mma_probe.py")
     .add_local_file("bench/fused_probe.py", "/root/fused_probe.py")
+    .add_local_file("bench/latency_probe.py", "/root/latency_probe.py")
+    .add_local_file("bench/gemm_bisect.py", "/root/gemm_bisect.py")
+    .add_local_file("bench/tiled_probe.py", "/root/tiled_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
@@ -188,7 +191,8 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
 def compare_benchmark(samples: int = 5, corpus: bool = True,
                       candidate_fp8: str = "on", short_draft: int = 2,
                       long_context: bool = False, candidate_kv: str = "bf16",
-                      baseline_fp8: str = "off", candidate_int8_mma: str = "off"):
+                      baseline_fp8: str = "off", candidate_int8_mma: str = "off",
+                      baseline_int8_mma: str = "off"):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -218,7 +222,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         for label in order:
             os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else baseline_fp8
             os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
-            os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else "off"
+            os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else baseline_int8_mma
             os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
@@ -235,7 +239,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
 def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json",
             candidate_fp8: str = "on", short_draft: int = 2,
             long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
-            candidate_int8_mma: str = "off"):
+            candidate_int8_mma: str = "off", baseline_int8_mma: str = "off"):
     import hashlib
     import json
     import subprocess
@@ -262,12 +266,14 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "baseline_fp8": baseline_fp8, "candidate_fp8": candidate_fp8, "candidate_kv": candidate_kv,
         "candidate_short_draft": short_draft,
         "candidate_int8_mma": candidate_int8_mma,
+        "baseline_int8_mma": baseline_int8_mma,
         "long_context": long_context,
     }
     results = compare_benchmark.remote(samples=samples, corpus=corpus,
                                        candidate_fp8=candidate_fp8, short_draft=short_draft,
                                        long_context=long_context, candidate_kv=candidate_kv,
-                                       baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma)
+                                       baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma,
+                                       baseline_int8_mma=baseline_int8_mma)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -1655,6 +1661,54 @@ def kv_checks():
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def tiled_probe():
+    """The decode GEMM over a tiled weight layout against row-major, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/tiled_probe.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.splitlines():
+        if not line.startswith("RESULT_JSON="):
+            print(line, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def gemm_bisect():
+    """Time the decode GEMM with one component removed at a time, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/gemm_bisect.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.splitlines():
+        if not line.startswith("RESULT_JSON="):
+            print(line, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def latency_probe():
+    """Fixed versus streaming cost of the decode GEMM, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/latency_probe.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.splitlines():
+        if not line.startswith("RESULT_JSON="):
+            print(line, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def fused_probe():
     """Time the fused GEMM+add-norm kernel against the two-launch pair."""
     import subprocess

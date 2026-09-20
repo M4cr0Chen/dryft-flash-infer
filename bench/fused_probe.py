@@ -17,7 +17,7 @@ def run():
     n = 2560
     for name, k, cfg in (("o", 4096, (4, 8, 1, 1)), ("down", 9728, (4, 8, 1, 1))):
         weights = [torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02 for _ in range(12)]
-        prepared = [cuda_fp8.prepare(cuda_fp8.quantize(w)) for w in weights]
+        prepared = [cuda_fp8.prepare(cuda_fp8.quantize(w), tiled=False) for w in weights]  # row-major kernel
         norms = [torch.randn(n, dtype=torch.bfloat16, device="cuda") for _ in range(12)]
         pairs = list(zip(prepared, norms))
         for batch in (1, 4, 16):

@@ -80,7 +80,7 @@ def module(nt):
 
 def matmul(x, w, config, swiglu_mode=False):
     b, k = x.shape
-    warps, nt, splits, gps, stage, _ = old._plan(w, b, config)
+    warps, nt, splits, gps, stage, _, _ = old._plan(w, b, config)
     mode = 2 if swiglu_mode else (1 if splits > 1 else 0)
     if swiglu_mode and splits != 1:
         raise ValueError('SwiGLU requires a complete K reduction')
@@ -104,7 +104,7 @@ def main():
     torch.manual_seed(781)
     for b in (1,3,4,12,16,24,32):
         x=torch.randn(b,2560,device='cuda',dtype=torch.bfloat16)
-        w=old.prepare(old.quantize(torch.randn(128,2560,device='cuda',dtype=torch.bfloat16)))
+        w=old.prepare(old.quantize(torch.randn(128,2560,device='cuda',dtype=torch.bfloat16)),tiled=False)
         packed=pack(x)
         for stage in (0,2):
             for split in (1,4):

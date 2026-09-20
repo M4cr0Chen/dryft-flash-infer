@@ -312,7 +312,7 @@ def check_fused_add_norm():
     cases, worst = 0, 0.0
     for k in (4096, 9728):
         weight = torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
-        prepared = cuda_fp8.prepare(cuda_fp8.quantize(weight))
+        prepared = cuda_fp8.prepare(cuda_fp8.quantize(weight), tiled=False)  # the fused kernel addresses rows
         norm = 1.0 + 0.1 * torch.randn(n, dtype=torch.bfloat16, device="cuda")
         for batch in (1, 3, 4, 8, 16):
             x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")

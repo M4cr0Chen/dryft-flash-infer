@@ -403,3 +403,26 @@ def test_mlp_fusion_must_beat_selected_projection(monkeypatch):
     engine._choose_mlp(1)
     assert calls == ["selected"]
     assert engine.fused_mlp is None
+
+
+def test_tiled_weight_layout_round_trips():
+    """The tiled INT8 layout is a permutation of the row-major fragment order."""
+    import importlib
+
+    torch.manual_seed(0)
+    cuda_fp8 = importlib.import_module("kernels.cuda_fp8")   # the package hides it without Triton
+
+    weight = torch.randn(64, 256, dtype=torch.bfloat16)
+    packed = cuda_fp8.quantize(weight)
+    rowmajor = cuda_fp8.prepare(packed, tiled=False)
+    tiled = cuda_fp8.prepare(packed, tiled=True)
+    assert tiled.tiled and not rowmajor.tiled
+    assert tiled.weight.shape == rowmajor.weight.shape
+    assert not torch.equal(tiled.weight, rowmajor.weight)
+    assert torch.equal(tiled.row_major(), rowmajor.weight)
+    # One tile is the 16 rows x 128 bytes of one group: half, j, g, t, byte.
+    tile = tiled.weight.view(4, 2, 2, 2, 8, 4, 16)[1, 0]
+    rows = rowmajor.weight.view(4, 16, 2, 2, 4, 16)[1, :, 0]   # tile 1, group 0: row, j, t, byte
+    assert torch.equal(tile[0, 0, 3, 2], rows[3, 0, 2])        # half 0 -> rows 0-7
+    assert torch.equal(tile[1, 1, 5, 1], rows[13, 1, 1])       # half 1 -> rows 8-15
+    assert tiled.bytes_moved() == rowmajor.bytes_moved()

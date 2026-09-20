@@ -2,6 +2,117 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Where the decode GEMM's time goes, and a tiled layout with a shallow ring, September 20
+
+Starting point: `07110ef`, official 1177.3 tok/s. A fresh per-kernel trace of
+one graphed decode step (`bench/modal_bench.py::trace`) on the current engine:
+
+| Shape | Step | Projections + LM head | Attention | Add-norm + RoPE | Gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 x 512 | 2.84 ms | 2083 us (145 launches) | 243 us | 356 us | 130 us |
+| 4 x 2048 | 3.31 ms | 2128 us | 618 us | 389 us | 148 us |
+| 16 x 512 | 3.69 ms | 2529 us | 636 us | 414 us | 80 us |
+
+Against INT8 weights of 4.15 GB plus the KV cache at 3.0 TB/s, every step sits
+at 49-54% of the memory floor. The GEMMs are the pool: 2.53 ms at batch 16
+where the bytes need 1.38 ms.
+
+### Three hypotheses, two wrong
+
+`bench/latency_probe.py` times, in the same graph harness as the warmup race,
+an empty launch (1.55 us), a kernel that only streams the weight bytes, and the
+incumbent. Streaming costs 2.2 us plus bytes at 3.1 TB/s. The incumbent sits
+above that by roughly 2.5 us fixed plus 0.06 us/MB at batch 1 and 0.17 us/MB
+at batch 16 (o 2.8 us, qkv 2.5, down 4.8, gate/up 5.6 over the floor at
+batch 1; 3.7 / 4.2 / 9.0 / 11.3 at batch 16).
+
+1. **Bytes in flight.** A per-warp cp.async ring of 4 or 8 groups in shared
+   memory, bit-exact with the register kernel, was 0.90-1.03x on every shape.
+   Deeper prefetch is not the limiter.
+2. **Compute.** `bench/gemm_bisect.py` compiles the kernel with the MMA, the
+   dequantisation, the staging or the epilogue removed. With MMA and dequant
+   both gone, gate/up at batch 16 still takes 27.0 us for bytes that stream in
+   18.1 us (full kernel 29.6). Compute is not the limiter either. Staging pays
+   for itself (removing it costs 4-20 us at batch 16); the split-K planes cost
+   up to 4 us per call at batch 16 on the widest shape.
+3. **Occupancy and access pattern.** The register kernel needs 120-172
+   registers a thread (`cuFuncGetAttribute`), so 2-3 blocks fit per SM, one
+   at batch 32. Each warp load instruction also touches 16 rows 2.5 KB apart,
+   64 bytes each.
+
+### What shipped: tiled weights and a two-group ring
+
+`cuda_fp8.Prepared` now stores the weight as `[rows/16][K/128][half][j][g][t][16 B]`:
+the 16 rows x 128 bytes a warp consumes per group are one contiguous 2 KB
+tile, and every warp load instruction reads a contiguous 512 bytes. It is a
+load-time permutation of the fragment-permuted bytes (`row_major()` inverts it
+for the native INT8 path), bit-exact, `DRYFT_TILED=off` restores row-major.
+On its own it is worth 2-11% per projection.
+
+The cp.async ring stays, at depth 2: the same two groups in flight as the
+register kernel, but held in shared memory, which brings the kernel to 78
+registers and 3-6 blocks per SM. Depth 2 on the tiled layout is where it
+pays; depths 4 and 8 spend the occupancy back on shared memory.
+`bench/tiled_probe.py`, one H100, twelve weights cycled, best configuration
+of each, all bit-exact against row-major at the same warp count and split:
+
+| Projection | Batch | Stream floor | Row-major | Tiled | Tiled + ring 2 | Gain |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| qkv 16.2 MB | 1 / 16 | 7.0 | 9.9 / 11.6 | 9.7 / 11.2 | 9.5 / 11.5 | 4% / 3% |
+| o 10.8 MB | 1 / 16 | 5.7 | 8.3 / 9.2 | 7.9 / 8.9 | 8.1 / 8.9 | 5% / 4% |
+| gate/up 51.4 MB | 1 / 16 / 32 | 18.1 | 23.6 / 29.4 / 47.1 | 22.9 / 28.7 / 45.3 | 21.0 / 26.2 / 35.7 | 12% / 12% / 32% |
+| down 25.7 MB | 1 / 16 / 32 | 10.2 | 15.0 / 19.1 / 26.8 | 14.3 / 17.9 / 26.5 | 12.4 / 15.5 / 22.6 | 21% / 23% / 19% |
+| LM head 401 MB | 1 / 16 / 32 | 139.5 | 152.9 / 180.2 / 282.5 | 150.6 / 180.8 / 276.2 | 150.8 / 168.1 / 221.2 | 1% / 7% / 28% |
+
+(microseconds per call). The warmup race now carries the five ring
+configurations that won somewhere alongside six row-major ones; the losing
+row-major entries left to keep the race inside the warmup budget. Load pays
+one extra permutation per weight, about a second in total.
+
+### Paired, end to end
+
+Fresh processes, five corpus samples per shape, both engines with INT8
+weights and the native INT8 MLP enabled, order alternating per workload
+(`paired-tiled-20260920.json`, `paired-tiled-ring-20260920.json`):
+
+| Shape | Baseline `07110ef` | Tiled only | Tiled + ring in the race |
+| --- | ---: | ---: | ---: |
+| public-0, 1 x 512 -> 32 | 339.1 / 330.2 | 341.5 (+0.7%) | 336.2 (+1.8%) |
+| public-1, 4 x 2048 -> 32 | 576.1 / 573.1 | 581.1 (+0.9%) | 577.4 (+0.7%) |
+| public-2, 16 x 512 -> 128 | 3524.1 / 3508.4 | 3577.6 (+1.5%) | 3509.1 (+0.0%) |
+| 1 x 4096 -> 65 | 255.2 / 252.6 | 260.9 (+2.2%) | 259.3 (+2.6%) |
+
+(tok/s; the baseline column lists each run's own baseline.) Every candidate
+sample passes with a tie gap equal to or below its baseline's, as bit-exact
+kernels should. Load plus warmup stayed at 13-20 s.
+
+The traced step (`trace`, same shapes as above) says why batch 16 is flat.
+At batch 1 the step went 2.837 -> 2.718 ms: GEMM kernels -275 us, and the
+race's move of gate/up from the fused SwiGLU epilogue to planes plus a
+separate SwiGLU cost back 100 us in reduce and SwiGLU launches. At batch 16
+the step went 3.691 -> 3.671 ms: the GEMM kernels lost 314 us (2529 -> 2215),
+but the winning ring configurations put gate/up on planes + `reduce_partials`
++ `_swiglu_kernel` (+94 +52 us, replacing the one-launch native INT8 kernel
+the race now rated a wash), gave down sixteen planes instead of eight so the
+add-norm consumer grew 69 us, and the two extra launches per layer added
+68 us of gaps. The projection race sees the kernel and its reduce; it does
+not see the consumer's plane traffic or the launch it displaces. The next
+step here is a consumer-aware race for the planes projections (time
+`matmul_partials` plus `add_rms_norm_partials` together) and a SwiGLU that
+sums planes itself, which would bank the 314 us at batch 16.
+
+### INT8 prefill through cuBLASLt, measured and stopped
+
+Prefill is 11% / 53% / 18% of the measured time on the three public shapes
+and its GEMMs run at 676 TFLOPS in cuBLAS BF16, so INT8 GEMMs through
+`torch._int_mm` were the other candidate. Isolated at M=8192 on this runtime
+they are 0.95x (qkv), 1.16x (o), 0.77x (gate/up), 1.39x (down) and 0.89x
+(LM head) of `F.linear`, 1.03x in aggregate, before paying activation
+quantisation and an int32 epilogue; a materialised `[K, N]` operand is 8x
+slower still. FP8 `_scaled_mm` is the only 1.5-1.9x GEMM here and E4M3
+weights already failed the margin in decode. No engine change; the probe
+is `bench/modal_bench.py::int_mm_probe` on branch `prefill-int8`.
+
 ## Native integer MMA and fused activation packing, September 20
 
 Starting point: `e9b6f19`, the user-reported best is 1161.6 tok/s. The saved

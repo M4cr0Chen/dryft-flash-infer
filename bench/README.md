@@ -135,6 +135,9 @@ These development cases cover batch/prompt/output shapes 1/4096/65,
 
 ```sh
 .venv/bin/modal run bench/modal_bench.py::fp8_mma --batches 1,4,16,32
+.venv/bin/modal run bench/modal_bench.py::latency_probe    # fixed vs streaming cost of the GEMM
+.venv/bin/modal run bench/modal_bench.py::gemm_bisect      # the GEMM with MMA/dequant/staging/epilogue removed
+.venv/bin/modal run bench/modal_bench.py::tiled_probe      # row-major vs tiled vs tiled+ring, bit-exact
 ```
 
 Fresh process. For each projection shape and batch: cuBLAS BF16, the old
