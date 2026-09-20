@@ -1,0 +1,363 @@
+{
+  "started_at": "2026-09-20T07:14:16.467724+00:00",
+  "baseline_commit": "0bd7995",
+  "baseline_sha256": "e377ac46d3fc9a378ab5cd188946e2c132c38e784e57dbfd205eb332bd729691",
+  "result": {
+    "shape": [
+      "public-2",
+      16,
+      512,
+      128
+    ],
+    "panel": "core",
+    "corpus": "prose",
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "variants": {
+      "ordinary": {
+        "tps": 3563.388843130794,
+        "seconds": 0.5747337970000004,
+        "ttft": 0.10306565599999828,
+        "tpot": 0.0037139066692913427,
+        "spread": 0.00704456919210872,
+        "worst_gap": 1.375,
+        "passes_accuracy": true,
+        "samples": [
+          {
+            "ttft": 0.10306565599999828,
+            "seconds": 0.5747337970000004,
+            "gap": 0.375,
+            "exact": false
+          },
+          {
+            "ttft": 0.10530747600000012,
+            "seconds": 0.5760231670000024,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10277434799999696,
+            "seconds": 0.5737373359999935,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10235088099999956,
+            "seconds": 0.5740170280000001,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10566271800000493,
+            "seconds": 0.5777860880000034,
+            "gap": 1.375,
+            "exact": false
+          }
+        ],
+        "speedup_vs_ordinary": 1.0
+      },
+      "no_attention_splits": {
+        "tps": 3618.8582768956567,
+        "seconds": 0.5659243449999991,
+        "ttft": 0.10272883300000046,
+        "tpot": 0.0036461678346456647,
+        "spread": 0.010537601099304583,
+        "worst_gap": 1.375,
+        "passes_accuracy": true,
+        "samples": [
+          {
+            "ttft": 0.09965255299999853,
+            "seconds": 0.5623441370000037,
+            "gap": 0.375,
+            "exact": false
+          },
+          {
+            "ttft": 0.10286102999999969,
+            "seconds": 0.5659243449999991,
+            "gap": 0.1875,
+            "exact": false
+          },
+          {
+            "ttft": 0.10104597199999432,
+            "seconds": 0.564714642999995,
+            "gap": 0.75,
+            "exact": false
+          },
+          {
+            "ttft": 0.10563412900000202,
+            "seconds": 0.568307621999999,
+            "gap": 0.625,
+            "exact": false
+          },
+          {
+            "ttft": 0.10272883300000046,
+            "seconds": 0.5669716190000003,
+            "gap": 1.375,
+            "exact": false
+          }
+        ],
+        "speedup_vs_ordinary": 1.015566483537656
+      },
+      "half_attention_splits": {
+        "tps": 3608.1111459047634,
+        "seconds": 0.5676100089999991,
+        "ttft": 0.10412210799999855,
+        "tpot": 0.00364775898425197,
+        "spread": 0.0056174784613297205,
+        "worst_gap": 1.375,
+        "passes_accuracy": true,
+        "samples": [
+          {
+            "ttft": 0.10258931500000301,
+            "seconds": 0.5658547060000032,
+            "gap": 0.375,
+            "exact": false
+          },
+          {
+            "ttft": 0.10412210799999855,
+            "seconds": 0.5673434099999994,
+            "gap": 0.1875,
+            "exact": false
+          },
+          {
+            "ttft": 0.10559635700000314,
+            "seconds": 0.5686387020000012,
+            "gap": 0.75,
+            "exact": false
+          },
+          {
+            "ttft": 0.1053557689999991,
+            "seconds": 0.5690432429999959,
+            "gap": 0.625,
+            "exact": false
+          },
+          {
+            "ttft": 0.10394382799999846,
+            "seconds": 0.5676100089999991,
+            "gap": 1.375,
+            "exact": false
+          }
+        ],
+        "speedup_vs_ordinary": 1.0125504975018882
+      },
+      "no_residual_norm_fusion": {
+        "tps": 3519.096850736337,
+        "seconds": 0.5819675010000012,
+        "ttft": 0.10557724499999921,
+        "tpot": 0.003754867960629901,
+        "spread": 0.009514012364065415,
+        "worst_gap": 1.375,
+        "passes_accuracy": true,
+        "samples": [
+          {
+            "ttft": 0.1032219430000012,
+            "seconds": 0.5800901739999986,
+            "gap": 0.375,
+            "exact": false
+          },
+          {
+            "ttft": 0.10492930799999556,
+            "seconds": 0.5812621119999974,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10784331800000047,
+            "seconds": 0.5856270199999969,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10557724499999921,
+            "seconds": 0.5819675010000012,
+            "gap": 0.25,
+            "exact": false
+          },
+          {
+            "ttft": 0.10717172200000391,
+            "seconds": 0.5848179910000013,
+            "gap": 1.375,
+            "exact": false
+          }
+        ],
+        "speedup_vs_ordinary": 0.9875702612472844
+      }
+    },
+    "errors": {},
+    "setup": {
+      "ordinary": {
+        "seconds": 0.5752432290000016,
+        "dispatch": {
+          "families": {
+            "qkv": "fp8",
+            "o": "fp8",
+            "gate_up": "fp8",
+            "down": "fp8",
+            "lm_head": "fp8"
+          },
+          "partials": {
+            "qkv": [
+              4,
+              4,
+              1,
+              1
+            ],
+            "o": [
+              4,
+              8,
+              1,
+              1
+            ],
+            "down": [
+              4,
+              8,
+              1,
+              1
+            ]
+          },
+          "integer_mlp": true,
+          "integer_head": false,
+          "fused_mlp": true,
+          "attention_splits": 2,
+          "runners": {
+            "qkv": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 4, 1, 1))",
+            "o": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "gate_up": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 4, 1, 1))",
+            "down": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "lm_head": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 1, 1, 1))"
+          }
+        }
+      },
+      "no_attention_splits": {
+        "seconds": 1.0977294129999997,
+        "dispatch": {
+          "families": {
+            "qkv": "fp8",
+            "o": "fp8",
+            "gate_up": "fp8",
+            "down": "fp8",
+            "lm_head": "fp8"
+          },
+          "partials": {
+            "qkv": [
+              4,
+              4,
+              1,
+              1
+            ],
+            "o": [
+              4,
+              8,
+              1,
+              1
+            ],
+            "down": [
+              4,
+              8,
+              1,
+              1
+            ]
+          },
+          "integer_mlp": true,
+          "integer_head": false,
+          "fused_mlp": true,
+          "attention_splits": 1,
+          "runners": {
+            "qkv": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 4, 1, 1))",
+            "o": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "gate_up": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 4, 1, 1))",
+            "down": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "lm_head": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 1, 1, 1))"
+          }
+        }
+      },
+      "half_attention_splits": {
+        "seconds": 0.7983102340000059,
+        "dispatch": {
+          "families": {
+            "qkv": "fp8",
+            "o": "fp8",
+            "gate_up": "fp8",
+            "down": "fp8",
+            "lm_head": "fp8"
+          },
+          "partials": {
+            "qkv": [
+              4,
+              4,
+              1,
+              1
+            ],
+            "o": [
+              4,
+              8,
+              1,
+              1
+            ],
+            "down": [
+              4,
+              8,
+              1,
+              1
+            ]
+          },
+          "integer_mlp": true,
+          "integer_head": false,
+          "fused_mlp": true,
+          "attention_splits": 1,
+          "runners": {
+            "qkv": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 4, 1, 1))",
+            "o": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "gate_up": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 4, 1, 1))",
+            "down": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "lm_head": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 1, 1, 1))"
+          }
+        }
+      },
+      "no_residual_norm_fusion": {
+        "seconds": 1.0033414339999993,
+        "dispatch": {
+          "families": {
+            "qkv": "fp8",
+            "o": "fp8",
+            "gate_up": "fp8",
+            "down": "fp8",
+            "lm_head": "fp8"
+          },
+          "partials": {
+            "qkv": [
+              4,
+              4,
+              1,
+              1
+            ],
+            "o": [
+              4,
+              8,
+              1,
+              1
+            ],
+            "down": [
+              4,
+              8,
+              1,
+              1
+            ]
+          },
+          "integer_mlp": true,
+          "integer_head": false,
+          "fused_mlp": true,
+          "attention_splits": 2,
+          "runners": {
+            "qkv": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 4, 1, 1))",
+            "o": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "gate_up": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 4, 1, 1))",
+            "down": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(4, 8, 1, 1))",
+            "lm_head": "functools.partial(<function matmul at 0x2b0d731685e0>, config=(8, 1, 1, 1))"
+          }
+        }
+      }
+    },
+    "study_seconds": 44.411213593,
+    "peak_memory_fraction": 0.2713986448230355
+  }
+}

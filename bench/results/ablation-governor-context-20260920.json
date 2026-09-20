@@ -1,0 +1,1652 @@
+{
+  "started_at": "2026-09-20T07:26:34.841150+00:00",
+  "baseline_commit": "0bd7995",
+  "baseline_sha256": "e377ac46d3fc9a378ab5cd188946e2c132c38e784e57dbfd205eb332bd729691",
+  "study_sha256": "529b7ba65a371ad5670d0d30534ff0e1f24e8fee53663d1652a3fbad27a83460",
+  "results": [
+    {
+      "shape": [
+        "coverage-long",
+        1,
+        4096,
+        65
+      ],
+      "panel": "core",
+      "corpus": "prose",
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "variants": {
+        "ordinary": {
+          "tps": 241.1402556645417,
+          "seconds": 0.2695526709999996,
+          "ttft": 0.06824772600000273,
+          "tpot": 0.0031468144531249242,
+          "spread": 0.010717426725107256,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06824772600000273,
+              "seconds": 0.2695526709999996,
+              "gap": 0.0,
+              "exact": false
+            },
+            {
+              "ttft": 0.06809861900000413,
+              "seconds": 0.2694947439999993,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06971818999999613,
+              "seconds": 0.2723836549999987,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.0681685200000004,
+              "seconds": 0.26953971000000365,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06911750300000108,
+              "seconds": 0.2708291619999983,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup_vs_ordinary": 1.0
+        },
+        "shipping": {
+          "tps": 251.46786629476796,
+          "seconds": 0.25848232999999965,
+          "ttft": 0.0682834750000012,
+          "tpot": 0.002953182703124946,
+          "spread": 0.0747811349425945,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06922700599999843,
+              "seconds": 0.2559331999999941,
+              "gap": 0.0,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 37,
+                "verify_passes": 21,
+                "accepted": 6,
+                "proposed": 41,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06808295599999781,
+              "seconds": 0.2595849020000003,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 29,
+                "verify_passes": 30,
+                "accepted": 5,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06947863700000312,
+              "seconds": 0.25848232999999965,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 28,
+                "verify_passes": 30,
+                "accepted": 6,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0682834750000012,
+              "seconds": 0.2518221429999983,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 35,
+                "verify_passes": 22,
+                "accepted": 7,
+                "proposed": 44,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06804431999999849,
+              "seconds": 0.2711517450000045,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 33,
+                "verify_passes": 30,
+                "accepted": 1,
+                "proposed": 60,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.042828231237315
+        },
+        "spec_target120": {
+          "tps": 256.61522769684314,
+          "seconds": 0.253297517,
+          "ttft": 0.06784634199999573,
+          "tpot": 0.002914348609375006,
+          "spread": 0.08482678493844742,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.067772484999999,
+              "seconds": 0.2528958199999991,
+              "gap": 0.0,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 31,
+                "verify_passes": 26,
+                "accepted": 7,
+                "proposed": 51,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06968251699999684,
+              "seconds": 0.26121802599999455,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 29,
+                "verify_passes": 30,
+                "accepted": 5,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06677920599999965,
+              "seconds": 0.253297517,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 28,
+                "verify_passes": 30,
+                "accepted": 6,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0682387800000015,
+              "seconds": 0.24917289300000078,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 27,
+                "verify_passes": 29,
+                "accepted": 8,
+                "proposed": 58,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06784634199999573,
+              "seconds": 0.2706593070000025,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 33,
+                "verify_passes": 30,
+                "accepted": 1,
+                "proposed": 60,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.064174154537802
+        },
+        "spec_target125": {
+          "tps": 252.37606532645034,
+          "seconds": 0.2575521569999992,
+          "ttft": 0.06929022700000331,
+          "tpot": 0.002941592656249936,
+          "spread": 0.09847888790929626,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06841418500000174,
+              "seconds": 0.25191338000000485,
+              "gap": 0.0,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 30,
+                "verify_passes": 27,
+                "accepted": 7,
+                "proposed": 53,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06783380899999969,
+              "seconds": 0.257930273999996,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 29,
+                "verify_passes": 30,
+                "accepted": 5,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06929022700000331,
+              "seconds": 0.2575521569999992,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 28,
+                "verify_passes": 30,
+                "accepted": 6,
+                "proposed": 59,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06931164899999942,
+              "seconds": 0.24772870099999977,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 29,
+                "verify_passes": 26,
+                "accepted": 9,
+                "proposed": 52,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06936858699999959,
+              "seconds": 0.27309215100000017,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 33,
+                "verify_passes": 30,
+                "accepted": 1,
+                "proposed": 60,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.046594500080232
+        },
+        "attention_target128": {
+          "tps": 244.41940486717465,
+          "seconds": 0.26593633200000255,
+          "ttft": 0.06962445100000281,
+          "tpot": 0.0030685963593749532,
+          "spread": 0.010641419240143559,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06883824599999855,
+              "seconds": 0.2654111049999983,
+              "gap": 0.0,
+              "exact": false
+            },
+            {
+              "ttft": 0.06962878499999903,
+              "seconds": 0.26593633200000255,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06836546200000271,
+              "seconds": 0.2647556289999997,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06990096599999873,
+              "seconds": 0.2662401970000019,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06962445100000281,
+              "seconds": 0.26758556899999775,
+              "gap": 0.125,
+              "exact": false
+            }
+          ],
+          "speedup_vs_ordinary": 1.0135985142488804
+        }
+      },
+      "errors": {},
+      "setup": {
+        "ordinary": {
+          "seconds": 0.26859839600000157,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "shipping": {
+          "seconds": 0.2601052540000026,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target120": {
+          "seconds": 0.26145965300000285,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target125": {
+          "seconds": 0.2605956669999969,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "attention_target128": {
+          "seconds": 1.3092028239999962,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 16,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2ad80a364680>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2ad80a364680>, config=(8, 2, 1, 1))"
+            }
+          }
+        }
+      },
+      "study_seconds": 38.498871829,
+      "peak_memory_fraction": 0.25551468073047473
+    },
+    {
+      "shape": [
+        "coverage-long",
+        1,
+        4096,
+        65
+      ],
+      "panel": "core",
+      "corpus": "code",
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "variants": {
+        "ordinary": {
+          "tps": 240.69646328910468,
+          "seconds": 0.27004966800001284,
+          "ttft": 0.06874277500000403,
+          "tpot": 0.0031478056875000604,
+          "spread": 0.014094784963752924,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06785647799999595,
+              "seconds": 0.26822197699999606,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.06874277500000403,
+              "seconds": 0.27004966800001284,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06845093599999075,
+              "seconds": 0.2699104999999946,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06943153999999652,
+              "seconds": 0.2720282689999891,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06948913800000867,
+              "seconds": 0.27195226200001343,
+              "gap": 0.375,
+              "exact": false
+            }
+          ],
+          "speedup_vs_ordinary": 1.0
+        },
+        "shipping": {
+          "tps": 269.3380358925757,
+          "seconds": 0.241332419999992,
+          "ttft": 0.06703922800001294,
+          "tpot": 0.0027193153906250878,
+          "spread": 0.042103402435545674,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06913486499999522,
+              "seconds": 0.241332419999992,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 49,
+                "verify_passes": 5,
+                "accepted": 10,
+                "proposed": 10,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06707321199999683,
+              "seconds": 0.24862457999999776,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 48,
+                "verify_passes": 9,
+                "accepted": 7,
+                "proposed": 18,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0669310079999974,
+              "seconds": 0.24096719300000302,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 38,
+                "verify_passes": 16,
+                "accepted": 10,
+                "proposed": 32,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06703922800001294,
+              "seconds": 0.23964036200000294,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 44,
+                "verify_passes": 10,
+                "accepted": 10,
+                "proposed": 20,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06697877400000607,
+              "seconds": 0.24980127800000673,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 32,
+                "verify_passes": 25,
+                "accepted": 7,
+                "proposed": 49,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.118994571885625
+        },
+        "spec_target120": {
+          "tps": 274.80670508573917,
+          "seconds": 0.23652989100000354,
+          "ttft": 0.06872669600001302,
+          "tpot": 0.0026312574062499205,
+          "spread": 0.07234519885692599,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06698793099999989,
+              "seconds": 0.2353884049999948,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 47,
+                "verify_passes": 6,
+                "accepted": 11,
+                "proposed": 12,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06900750299999459,
+              "seconds": 0.2445085149999926,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 43,
+                "verify_passes": 12,
+                "accepted": 9,
+                "proposed": 24,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06872669600001302,
+              "seconds": 0.23652989100000354,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 36,
+                "verify_passes": 16,
+                "accepted": 12,
+                "proposed": 32,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06804336999999805,
+              "seconds": 0.23355566400000782,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 42,
+                "verify_passes": 10,
+                "accepted": 12,
+                "proposed": 20,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0688197820000056,
+              "seconds": 0.2506674660000101,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 32,
+                "verify_passes": 24,
+                "accepted": 8,
+                "proposed": 47,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.1417147611166354
+        },
+        "spec_target125": {
+          "tps": 278.61658993251683,
+          "seconds": 0.23329551199999798,
+          "ttft": 0.06811368599998957,
+          "tpot": 0.0025709164375000704,
+          "spread": 0.0724739059704039,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06875685999999348,
+              "seconds": 0.23329551199999798,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 41,
+                "verify_passes": 10,
+                "accepted": 13,
+                "proposed": 20,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06811368599998957,
+              "seconds": 0.24040988099999083,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 47,
+                "verify_passes": 7,
+                "accepted": 10,
+                "proposed": 14,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06806794999999966,
+              "seconds": 0.2296521130000002,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 33,
+                "verify_passes": 17,
+                "accepted": 14,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0697435370000079,
+              "seconds": 0.2317411430000078,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 37,
+                "verify_passes": 13,
+                "accepted": 14,
+                "proposed": 26,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06702226000000167,
+              "seconds": 0.2465599500000053,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 30,
+                "verify_passes": 26,
+                "accepted": 8,
+                "proposed": 51,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.1575433478549522
+        },
+        "attention_target128": {
+          "tps": 245.1602019329518,
+          "seconds": 0.26513275599999986,
+          "ttft": 0.06925461199999461,
+          "tpot": 0.003060596000000082,
+          "spread": 0.016958530767143418,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06925461199999461,
+              "seconds": 0.26513275599999986,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.07021683400000711,
+              "seconds": 0.26699351500001,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06689813399999878,
+              "seconds": 0.2624972530000065,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06896742300000369,
+              "seconds": 0.2641843390000105,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06932702899999299,
+              "seconds": 0.26606935399999543,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup_vs_ordinary": 1.0185450944432268
+        }
+      },
+      "errors": {},
+      "setup": {
+        "ordinary": {
+          "seconds": 0.26931310799999153,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "shipping": {
+          "seconds": 0.24170970299999794,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target120": {
+          "seconds": 0.23433883799999933,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target125": {
+          "seconds": 0.22802628500001276,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "attention_target128": {
+          "seconds": 0.4450687730000027,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 16,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2b034b8d0c20>, config=(8, 2, 1, 1))"
+            }
+          }
+        }
+      },
+      "study_seconds": 21.924602555000007,
+      "peak_memory_fraction": 0.25551468073047473
+    },
+    {
+      "shape": [
+        "coverage-long",
+        1,
+        4096,
+        65
+      ],
+      "panel": "core",
+      "corpus": "technical",
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "variants": {
+        "ordinary": {
+          "tps": 239.93981807334563,
+          "seconds": 0.2709012640000026,
+          "ttft": 0.06835875299999827,
+          "tpot": 0.0031647267343750674,
+          "spread": 0.011122528390959351,
+          "worst_gap": 0.1875,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.0683030819999999,
+              "seconds": 0.26917750300000876,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06765956099999926,
+              "seconds": 0.2709273560000014,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.06948006200001089,
+              "seconds": 0.27057141800000295,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.06937465100000395,
+              "seconds": 0.27219060999999556,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06835875299999827,
+              "seconds": 0.2709012640000026,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup_vs_ordinary": 1.0
+        },
+        "shipping": {
+          "tps": 247.83132813323707,
+          "seconds": 0.26227515499999754,
+          "ttft": 0.06784551200000521,
+          "tpot": 0.003045208593750015,
+          "spread": 0.08451296120673478,
+          "worst_gap": 0.1875,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06773169999999595,
+              "seconds": 0.2626250499999969,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 44,
+                "verify_passes": 17,
+                "accepted": 3,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06885078400000566,
+              "seconds": 0.2695160810000061,
+              "gap": 0.1875,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 48,
+                "verify_passes": 15,
+                "accepted": 1,
+                "proposed": 30,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06784551200000521,
+              "seconds": 0.24735043100000098,
+              "gap": 0.0625,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 41,
+                "verify_passes": 15,
+                "accepted": 8,
+                "proposed": 30,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06809353999999246,
+              "seconds": 0.25893503700000053,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 45,
+                "verify_passes": 15,
+                "accepted": 4,
+                "proposed": 30,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06715854200000138,
+              "seconds": 0.26227515499999754,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 41,
+                "verify_passes": 20,
+                "accepted": 3,
+                "proposed": 40,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.0328895392322048
+        },
+        "spec_target120": {
+          "tps": 245.78594607077233,
+          "seconds": 0.2644577570000024,
+          "ttft": 0.06773429099999362,
+          "tpot": 0.003056456812499997,
+          "spread": 0.07794117379579639,
+          "worst_gap": 0.1875,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06921892500000126,
+              "seconds": 0.2656476519999984,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 44,
+                "verify_passes": 17,
+                "accepted": 3,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06771129000000542,
+              "seconds": 0.2691853519999938,
+              "gap": 0.1875,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 48,
+                "verify_passes": 15,
+                "accepted": 1,
+                "proposed": 30,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06726799900000913,
+              "seconds": 0.24857320400001015,
+              "gap": 0.0625,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 39,
+                "verify_passes": 17,
+                "accepted": 8,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06773429099999362,
+              "seconds": 0.2608256159999911,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 44,
+                "verify_passes": 16,
+                "accepted": 4,
+                "proposed": 31,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0688445210000026,
+              "seconds": 0.2644577570000024,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 41,
+                "verify_passes": 20,
+                "accepted": 3,
+                "proposed": 40,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.0243649763693645
+        },
+        "spec_target125": {
+          "tps": 246.8009237113116,
+          "seconds": 0.26337016499999777,
+          "ttft": 0.06874675999999624,
+          "tpot": 0.003061354812500028,
+          "spread": 0.0916636324391695,
+          "worst_gap": 0.1875,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06744345699999599,
+              "seconds": 0.26337016499999777,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 44,
+                "verify_passes": 17,
+                "accepted": 3,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.0696232450000025,
+              "seconds": 0.2717638760000085,
+              "gap": 0.1875,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 48,
+                "verify_passes": 15,
+                "accepted": 1,
+                "proposed": 30,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06835492400000476,
+              "seconds": 0.2476224100000053,
+              "gap": 0.0625,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 39,
+                "verify_passes": 17,
+                "accepted": 8,
+                "proposed": 34,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06884184800000526,
+              "seconds": 0.25816298499999846,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": {
+                "ordinary_passes": 43,
+                "verify_passes": 16,
+                "accepted": 5,
+                "proposed": 31,
+                "outputs": 65
+              }
+            },
+            {
+              "ttft": 0.06874675999999624,
+              "seconds": 0.26542794099999867,
+              "gap": 0.0,
+              "exact": true,
+              "speculation": {
+                "ordinary_passes": 41,
+                "verify_passes": 20,
+                "accepted": 3,
+                "proposed": 40,
+                "outputs": 65
+              }
+            }
+          ],
+          "speedup_vs_ordinary": 1.028595110611731
+        },
+        "attention_target128": {
+          "tps": 245.7144331429416,
+          "seconds": 0.2645347250000043,
+          "ttft": 0.06831777799999372,
+          "tpot": 0.0030583666406249765,
+          "spread": 0.00920493897351481,
+          "worst_gap": 0.1875,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.06831777799999372,
+              "seconds": 0.2636702259999879,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06883207699999616,
+              "seconds": 0.26456754199999466,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.06829704499999423,
+              "seconds": 0.26565725700000087,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.06924231600000041,
+              "seconds": 0.2645347250000043,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.06719380200000558,
+              "seconds": 0.2632222310000003,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup_vs_ordinary": 1.0240669310994925
+        }
+      },
+      "errors": {},
+      "setup": {
+        "ordinary": {
+          "seconds": 0.26995790700000555,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "shipping": {
+          "seconds": 0.2483140429999935,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target120": {
+          "seconds": 0.23662495799999306,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "spec_target125": {
+          "seconds": 0.23286017099999867,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 32,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 2, 1, 1))"
+            }
+          }
+        },
+        "attention_target128": {
+          "seconds": 0.4486849740000025,
+          "dispatch": {
+            "families": {
+              "qkv": "fp8",
+              "o": "fp8",
+              "gate_up": "fp8",
+              "down": "fp8",
+              "lm_head": "fp8"
+            },
+            "partials": {
+              "qkv": [
+                8,
+                4,
+                1,
+                1
+              ],
+              "o": [
+                4,
+                8,
+                1,
+                1
+              ],
+              "down": [
+                4,
+                8,
+                1,
+                1
+              ]
+            },
+            "integer_mlp": false,
+            "integer_head": false,
+            "fused_mlp": true,
+            "attention_splits": 16,
+            "runners": {
+              "qkv": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 4, 1, 1))",
+              "o": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "gate_up": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 1, 1, 1))",
+              "down": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(4, 8, 1, 1))",
+              "lm_head": "functools.partial(<function matmul at 0x2af9e14dcc20>, config=(8, 2, 1, 1))"
+            }
+          }
+        }
+      },
+      "study_seconds": 23.171863161000005,
+      "peak_memory_fraction": 0.25551468073047473
+    }
+  ]
+}
