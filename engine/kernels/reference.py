@@ -79,6 +79,13 @@ def swiglu(gate_up: torch.Tensor) -> torch.Tensor:
     return (silu * up).to(gate_up.dtype)
 
 
+def swiglu_partials(partials):
+    total = torch.zeros_like(partials[0])
+    for part in partials:
+        total += part
+    return swiglu(total.to(torch.bfloat16))
+
+
 def qkv_norm_rope_to_cache(
     qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
     k_cache, v_cache, eps, k_scale=None, v_scale=None, k_copy=None, v_copy=None,

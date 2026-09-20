@@ -27,6 +27,11 @@ except Exception:  # pragma: no cover - the container always has Triton
         qkv_planes_norm_rope_to_cache,
         rms_norm,
         swiglu,
+        swiglu_partials,
+    )
+    from .reference import (
+        add_rms_norm as add_rms_norm_separate,
+        add_rms_norm_partials as add_rms_norm_partials_separate,
     )
 
     print("kernels: Triton unavailable, using torch reference", file=sys.stderr)
@@ -35,14 +40,17 @@ else:
     from .attention import DecodeAttention
     from . import cuda_fp8, cuda_gemv, cuda_mlp, fp8
     from .gemm import pick_matmul
-    from .norm import add_rms_norm, add_rms_norm_partials, rms_norm
+    from .norm import (
+        add_rms_norm, add_rms_norm_partials, rms_norm,
+        add_rms_norm_separate, add_rms_norm_partials_separate,
+    )
     from .rope import (
         kv_norm_rope_to_cache,
         q_norm_rope,
         qkv_norm_rope_to_cache,
         qkv_planes_norm_rope_to_cache,
     )
-    from .swiglu import swiglu
+    from .swiglu import swiglu, swiglu_partials
 
 __all__ = [
     "HAVE_TRITON",
@@ -55,10 +63,13 @@ __all__ = [
     "cuda_mlp",
     "add_rms_norm",
     "add_rms_norm_partials",
+    "add_rms_norm_separate",
+    "add_rms_norm_partials_separate",
     "kv_norm_rope_to_cache",
     "q_norm_rope",
     "qkv_norm_rope_to_cache",
     "qkv_planes_norm_rope_to_cache",
     "rms_norm",
     "swiglu",
+    "swiglu_partials",
 ]

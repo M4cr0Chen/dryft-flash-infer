@@ -17,6 +17,7 @@ token and head; each tile is dequantised to bfloat16 as it is loaded, and the
 arithmetic after that is unchanged.
 """
 
+import os
 import sys
 
 import torch
@@ -25,6 +26,9 @@ import triton.language as tl
 
 _BLOCK_N = 64
 _PAD_M = 16  # tl.dot wants at least 16 rows; a KV group only has four
+# 128 programs nearly fill an H100's 132 SMs. Doubling that work merely to
+# cover the last four SMs adds partitions (and sometimes a merge launch).
+_PROGRAM_TARGET = int(os.environ.get("DRYFT_ATTENTION_PROGRAM_TARGET", "128"))
 
 
 @triton.jit
@@ -166,7 +170,7 @@ def plan_splits(capacity: int, batch: int, n_kv: int) -> tuple[int, int]:
     splits = 1
     while (
         splits < 32
-        and batch * n_kv * splits < 132
+        and batch * n_kv * splits < _PROGRAM_TARGET
         and capacity // (splits * 2) >= _BLOCK_N * 2
     ):
         splits *= 2

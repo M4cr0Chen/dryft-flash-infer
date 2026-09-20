@@ -2,6 +2,73 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Applying the ablations, September 20
+
+Starting point: `8a4f75d` (engine identical to the ring version `43822c0`).
+The changes implement the passing findings in `ABLATION_REPORT.md`:
+
+- **Separate split-K residual work from decode RMSNorm.** A pointwise kernel
+  sums FP32 planes sequentially, rounds the projection to BF16, adds and rounds
+  the residual, then the existing RMSNorm runs. Direct BF16 projections retain
+  their fused add/norm: separating those lost about 1% at batch 32. Prefill and
+  native INT8 normalization/activation packing also retain their existing
+  combined kernels. `DRYFT_DECODE_NORM=fused` restores the old plane consumer.
+- **Attention target 128 instead of 132 programs.** Avoid doubling 128 programs
+  merely to occupy the H100's last four SMs. At batch 16 this also removes the
+  merge kernel. `DRYFT_ATTENTION_PROGRAM_TARGET=132` restores the prior rule.
+- **Speculation target 1.20 for outputs of at least 64 tokens.** Shorter outputs
+  keep 1.15; their higher-target ablations showed no median benefit and less
+  spread headroom. `DRYFT_SHORT_LONG_TARGET=1.15` restores the old long-output
+  governor. An explicit `DRYFT_SHORT_TARGET` still overrides both defaults.
+- **Consume split-K planes directly in SwiGLU.** The new consumer replaces
+  reduction-to-BF16 plus a separate activation launch. It retains the projection,
+  SiLU and multiply BF16 casts. It is selected only for INT8-weight projections
+  when it beats the existing complete operation by 3% and matches its output.
+  It preserves BF16 activations; this does not force the native W8A8 MLP that
+  failed the ablations. `DRYFT_PARTIAL_SWIGLU=off` disables it.
+- **Skip unused mask updates** in custom decode and verification attention;
+  SDPA fallback paths still construct their masks.
+
+The new plane/SwiGLU consumer passed 40 GPU comparisons bit-exact against the
+real CUDA plane reduction followed by the existing SwiGLU. The separated norm
+passed 48 bit-exact cases, including batches 1--64 and 1--16 planes. All 42 CPU
+tests pass, including a new check that shorter requests reusing a long warmup
+cache return to the short-output governor.
+
+### Final paired H100 comparison
+
+Fresh processes, five corpus samples per shape; INT8 weights and the existing
+native INT8 policy enabled in both versions. Source hashes are recorded in
+`bench/results/paired-findings-final-20260920.json` and the tested candidate
+hash was checked against the working engine before packaging.
+
+| Shape | Ring baseline | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| public-0, 1 x 512 -> 32 | 351.3 | 361.5 | +2.9% |
+| public-1, 4 x 2048 -> 32 | 587.0 | 603.4 | +2.8% |
+| public-2, 16 x 512 -> 128 | 3541.2 | 3685.2 | +4.1% |
+| 1 x 4096 -> 65 | 259.1 | 272.1 | +5.0% |
+
+Every local gate passes. Load plus warmup is 11--17 seconds in the development
+comparison; candidate peak allocation is about 25.6% of the H100. Local memory
+and latency checks are diagnostics, not substitutes for official eligibility.
+
+The final prose/code/technical sweeps cover batches 1, 3, 8, 12, 16 and 32.
+All candidate generations pass teacher-forced replay. Largest observed gaps:
+1.375 at batch 16, 1.875 on the unchanged batch-32 projection path, and 0.5 on
+the long batch-one outputs. Maximum candidate sample spread is 13.6%.
+`findings-final-core-20260920.json` and `findings-final-coverage-20260920.json`
+retain these results. Their within-process controls hold the selected projection
+families and the partial-SwiGLU implementation fixed; the fresh-process paired
+file above measures the complete change against the old engine.
+
+`bench/findings_modal.py` runs the production implementations as component,
+combined, and coverage experiments. `partial_swiglu_study.py` isolates the new
+consumer. The first broad norm-separation candidate's batch-32 regression is
+retained in `findings-wide-20260920.json`; it is not the final dispatch policy.
+
+Official result pending for this candidate.
+
 ## Where the decode GEMM's time goes, and a tiled layout with a shallow ring, September 20
 
 Starting point: `07110ef`, official 1177.3 tok/s. A fresh per-kernel trace of

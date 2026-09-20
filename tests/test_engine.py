@@ -312,6 +312,29 @@ def test_short_verification_rebuilds_after_shape_changes(model_path, monkeypatch
         assert (engine.short_verifier is not None) == (batch == 1)
 
 
+def test_short_governor_uses_current_output_length(model_path, monkeypatch):
+    """A shorter call reusing a warmed cache must return to the short governor."""
+    import engine as engine_module
+    from kernels.speculation import ShortVerifier
+
+    monkeypatch.setattr(engine_module, "SHORT_DRAFT", 2)
+    monkeypatch.setattr(engine_module, "SHORT_TARGET", 1.15)
+    monkeypatch.setattr(engine_module, "SHORT_LONG_TARGET", 1.20)
+    engine = Engine(model_path)
+    prompts = _prompts(1, 18, 861)
+    targets = []
+    stream = ShortVerifier.stream
+
+    def recorded(self, prompt, steps, **kwargs):
+        targets.append(kwargs["target"])
+        yield from stream(self, prompt, steps, **kwargs)
+
+    monkeypatch.setattr(ShortVerifier, "stream", recorded)
+    for steps in (65, 32, 64, 1):
+        assert list(engine.generate(prompts, steps)) == _native_tokens(model_path, prompts, steps)
+    assert targets == [1.20, 1.15, 1.20, 1.15]
+
+
 def test_verification_tuner_keeps_each_projection_in_its_family(model_path, monkeypatch):
     """Verification widths must race only the weight family ordinary decode chose."""
     import engine as engine_module

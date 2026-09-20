@@ -78,6 +78,18 @@ def _add_rms_norm_partials_kernel(
     tl.store(Y + off, y.to(tl.bfloat16), mask=mask)
 
 
+@triton.jit
+def _residual_partials_kernel(X, P, R, WIDTH: tl.constexpr, SPLITS: tl.constexpr):
+    """Parallelize the plane reduction across channels before row-wise RMSNorm."""
+    i = tl.program_id(0) * 256 + tl.arange(0, 256)
+    acc = tl.full((256,), 0.0, tl.float32)
+    for part in range(SPLITS):
+        acc += tl.load(P + part * WIDTH + i, mask=i < WIDTH, other=0.0)
+    delta = acc.to(tl.bfloat16).to(tl.float32)
+    x = tl.load(X + i, mask=i < WIDTH, other=0.0).to(tl.float32)
+    tl.store(R + i, (x + delta).to(tl.bfloat16), mask=i < WIDTH)
+
+
 def _launch_shape(n_cols: int) -> tuple[int, int]:
     block = triton.next_power_of_2(n_cols)
     return block, max(4, min(16, block // 256))
@@ -124,3 +136,19 @@ def add_rms_norm_partials(
         BLOCK=block, num_warps=warps,
     )
     return residual, out
+
+
+def add_rms_norm_separate(x, delta, weight, eps):
+    """Separate BF16 residual addition and RMSNorm, for short decode matrices."""
+    residual = x + delta
+    return residual, rms_norm(residual, weight, eps)
+
+
+def add_rms_norm_partials_separate(x, partials, weight, eps):
+    """Sequential FP32 plane sum, BF16 projection/residual casts, then RMSNorm."""
+    residual = torch.empty_like(x)
+    width = x.numel()
+    _residual_partials_kernel[(triton.cdiv(width, 256),)](
+        x, partials, residual, width, partials.shape[0], num_warps=4,
+    )
+    return residual, rms_norm(residual, weight, eps)

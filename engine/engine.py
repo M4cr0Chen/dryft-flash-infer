@@ -31,12 +31,15 @@ from kernels import (
     pick_matmul,
     add_rms_norm,
     add_rms_norm_partials,
+    add_rms_norm_separate,
+    add_rms_norm_partials_separate,
     kv_norm_rope_to_cache,
     q_norm_rope,
     qkv_norm_rope_to_cache,
     qkv_planes_norm_rope_to_cache,
     rms_norm,
     swiglu,
+    swiglu_partials,
 )
 
 #: Cap on rows per prefill pass. The MLP's fused gate/up activation is the
@@ -84,6 +87,12 @@ TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
 #: Combine independent Q and K/V normalization, rotation and cache writes.
 FUSE_ROPE = os.environ.get("DRYFT_FUSE_ROPE", "on") == "on"
 
+#: Split-K decode benefits from a parallel residual/plane reduction followed
+#: by the row-wise norm. Direct BF16 projections, prefill and native INT8
+#: activation packing keep their combined kernels. Set to "fused" to compare.
+SEPARATE_DECODE_NORM = os.environ.get("DRYFT_DECODE_NORM", "separate") == "separate"
+PARTIAL_SWIGLU = os.environ.get("DRYFT_PARTIAL_SWIGLU", "on") == "on"
+
 #: Fold the residual add and RMSNorm into the o and down GEMMs' last block.
 #: Measured: the one block doing the norm for the batch is latency-bound at
 #: about 4 us per row, more than the separate kernel's launch. Off; kept
@@ -109,6 +118,15 @@ DRAFT_TARGET = float(os.environ.get("DRYFT_DRAFT_TARGET", "1.25"))
 #: Separate 1/2/3-row graphs avoid padded verification on empty proposals.
 SHORT_DRAFT = int(os.environ.get("DRYFT_SHORT_DRAFT", "2"))
 SHORT_TARGET = float(os.environ.get("DRYFT_SHORT_TARGET", "1.15"))
+SHORT_LONG_TARGET = float(os.environ.get(
+    "DRYFT_SHORT_LONG_TARGET", os.environ.get("DRYFT_SHORT_TARGET", "1.20")
+))
+SHORT_LONG_MIN_TOKENS = 64
+
+
+def _short_target(max_new_tokens):
+    """Short generations retain the tighter spread governor."""
+    return SHORT_LONG_TARGET if max_new_tokens >= SHORT_LONG_MIN_TOKENS else SHORT_TARGET
 
 #: Spare cache slots, for the decode steps spent warming the graph.
 CAPACITY_SLACK = 8
@@ -746,6 +764,18 @@ class Engine:
         if chosen is not None:
             self.fused_mlp = lambda a, w, c=chosen: fused(a, w, config=c)
             self.fused_operand = operands
+        if PARTIAL_SWIGLU and family == "fp8":
+            config = getattr(projection, "keywords", {}).get("config")
+            if config is not None and cuda_fp8.splits(operands[0], batch, config) > 1:
+                def consume_planes(a, w, c=config):
+                    return swiglu_partials(cuda_fp8.matmul_partials(a, w, c))
+                expected = swiglu(projection(x, self.operand['gate_up'][0]))
+                actual = consume_planes(x, operands[0])
+                if torch.equal(expected, actual):
+                    elapsed = clock(lambda w: consume_planes(x, w), operands)
+                    if elapsed < best * .97:
+                        best, chosen = elapsed, ("planes", config)
+                        self.fused_mlp, self.fused_operand = consume_planes, operands
         print(f"engine: mlp      fused={chosen} ({family})  {split / best:.2f}x vs split",
               file=sys.stderr)
 
@@ -788,6 +818,9 @@ class Engine:
         the last one borrows the model's output norm, so the chain never
         materialises a residual only to read it back.
         """
+        separate_norm = SEPARATE_DECODE_NORM and matmul is not None
+        add_norm_partials = add_rms_norm_partials_separate if separate_norm else add_rms_norm_partials
+
         def project(name, index, source, fallback):
             if matmul:
                 return matmul[name](source, self.operand[name][index])
@@ -804,7 +837,7 @@ class Engine:
                 delta = (cuda_fp8.matmul_partials(source, self.operand[name][index], config)
                          if config is not None else project(name, index, source, fallback))
                 return add_norm_quant(residual, delta, norm_weight, self.eps)
-            warps = self.fused_out.get(name) if matmul else None
+            warps = self.fused_out.get(name) if matmul and not separate_norm else None
             if warps is not None:
                 return cuda_fp8.matmul_add_norm(
                     source, self.operand[name][index], residual, norm_weight, self.eps,
@@ -813,7 +846,7 @@ class Engine:
             config = self.partial_config.get(name) if matmul else None
             if config is not None:
                 planes = cuda_fp8.matmul_partials(source, self.operand[name][index], config)
-                return add_rms_norm_partials(residual, planes, norm_weight, self.eps)
+                return add_norm_partials(residual, planes, norm_weight, self.eps)
             return add_rms_norm(residual, project(name, index, source, fallback),
                                 norm_weight, self.eps)
 
@@ -940,7 +973,8 @@ class Engine:
     def _decode_step(self) -> None:
         """One graphed step: everything reads and writes fixed addresses."""
         # The new token takes slot ``pos``, so keys 0..pos inclusive are live.
-        torch.le(self.arange, self.pos, out=self.mask)
+        if self.decode_attention is None:
+            torch.le(self.arange, self.pos, out=self.mask)
         x = F.embedding(self.token, self.embed).view(self.batch, self.hidden)
         normed = self._blocks(
             x, self.pos, 1, self.batch, 0, self._attend_decode, self.matmul
@@ -983,9 +1017,10 @@ class Engine:
         width = self.draft + 1
         torch.add(self.pos, self.offsets, out=self.spec_positions)
         # Query t sees every key written at or before its own position.
-        torch.le(
-            self.arange.view(1, -1), self.spec_positions.view(-1, 1), out=self.spec_mask
-        )
+        if self.decode_attention is None:
+            torch.le(
+                self.arange.view(1, -1), self.spec_positions.view(-1, 1), out=self.spec_mask
+            )
         x = F.embedding(self.spec_ids, self.embed).view(width, self.hidden)
         normed = self._blocks(
             x, self.spec_positions, width, 1, 0, self._attend_spec, self.matmul
@@ -1055,7 +1090,7 @@ class Engine:
                     )
                 elif self.short_verifier is not None:
                     yield from self.short_verifier.stream(
-                        input_ids[0], max_new_tokens, target=SHORT_TARGET,
+                        input_ids[0], max_new_tokens, target=_short_target(max_new_tokens),
                     )
                 else:
                     yield from self._stream(max_new_tokens)

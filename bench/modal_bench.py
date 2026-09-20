@@ -203,9 +203,12 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
-                            check_fp8_mma, check_kv_int8, check_fused_add_norm)
+                            check_fp8_mma, check_kv_int8, check_fused_add_norm,
+                            check_separate_decode_norm, check_partial_swiglu)
 
     _describe_gpu(require_h100=True)
+    check_separate_decode_norm()
+    check_partial_swiglu()
     check_rope_fusion()
     check_attention_dispatch()
     check_kv_int8()

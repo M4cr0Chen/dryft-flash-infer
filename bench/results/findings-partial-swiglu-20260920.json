@@ -1,0 +1,322 @@
+{
+  "started_at": "2026-09-20T08:09:04.400972+00:00",
+  "engine_sha256": "eb36fffbbc1d203083ddf7ea88c883ebb1b6a88f215a6025272bfc7e59bbcb7f",
+  "samples": 5,
+  "results": [
+    {
+      "shape": [
+        "public-0",
+        1,
+        512,
+        32
+      ],
+      "corpus": "prose",
+      "variants": {
+        "off": {
+          "tps": 344.2166313600647,
+          "seconds": 0.09296471200000411,
+          "ttft": 0.010898705999998981,
+          "tpot": 0.0026451211935484167,
+          "spread": 0.0640189688319422,
+          "worst_gap": 0.0625,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.010821681999999555,
+              "seconds": 0.09282043900000048,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.010898705999998981,
+              "seconds": 0.09539448900000025,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.011071800000003407,
+              "seconds": 0.09296471200000411,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.0108216619999979,
+              "seconds": 0.09261941799999818,
+              "gap": 0.0,
+              "exact": false
+            },
+            {
+              "ttft": 0.010930729999998334,
+              "seconds": 0.09857092299999692,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup": 1.0
+        },
+        "on": {
+          "tps": 346.587117125076,
+          "seconds": 0.09232887900000009,
+          "ttft": 0.010621708999998702,
+          "tpot": 0.0026133515161289767,
+          "spread": 0.05273558016451495,
+          "worst_gap": 0.0625,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.011314982000001805,
+              "seconds": 0.09232887900000009,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.010601533999995638,
+              "seconds": 0.09387023400000061,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.010621708999998702,
+              "seconds": 0.09139470699999919,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.01116300200000353,
+              "seconds": 0.09199879000000522,
+              "gap": 0.0,
+              "exact": false
+            },
+            {
+              "ttft": 0.009981541000001926,
+              "seconds": 0.09626372400000349,
+              "gap": 0.0,
+              "exact": true
+            }
+          ],
+          "speedup": 1.006886610201387
+        }
+      },
+      "dispatch": {
+        "off": {
+          "fused_mlp": "None",
+          "integer_mlp": false
+        },
+        "on": {
+          "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2b7662145bc0>",
+          "integer_mlp": false
+        }
+      }
+    },
+    {
+      "shape": [
+        "public-1",
+        4,
+        2048,
+        32
+      ],
+      "corpus": "prose",
+      "variants": {
+        "off": {
+          "tps": 593.0066814711054,
+          "seconds": 0.2158491700000127,
+          "ttft": 0.11465121100000886,
+          "tpot": 0.003264450290322704,
+          "spread": 0.011415299859677288,
+          "worst_gap": 0.25,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.11452480699999512,
+              "seconds": 0.21575320399999498,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.11511108499999523,
+              "seconds": 0.21617196199999,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.11465121100000886,
+              "seconds": 0.2158491700000127,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11502400100000898,
+              "seconds": 0.21629785900000797,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11311317499999518,
+              "seconds": 0.21383387599999537,
+              "gap": 0.0625,
+              "exact": false
+            }
+          ],
+          "speedup": 1.0
+        },
+        "on": {
+          "tps": 593.731953215769,
+          "seconds": 0.2155855000000031,
+          "ttft": 0.11464329999999734,
+          "tpot": 0.0032522446774196985,
+          "spread": 0.006875146983530467,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.11464329999999734,
+              "seconds": 0.2158430989999971,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11546845500001268,
+              "seconds": 0.2155855000000031,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.114074451999997,
+              "seconds": 0.21436416199999542,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.1150267590000027,
+              "seconds": 0.21584634400001335,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11380522199999632,
+              "seconds": 0.21474835599998698,
+              "gap": 0.0625,
+              "exact": false
+            }
+          ],
+          "speedup": 1.00122304143836
+        }
+      },
+      "dispatch": {
+        "off": {
+          "fused_mlp": "None",
+          "integer_mlp": false
+        },
+        "on": {
+          "fused_mlp": "<function Engine._choose_mlp.<locals>.<lambda> at 0x2b13a416b380>",
+          "integer_mlp": false
+        }
+      }
+    },
+    {
+      "shape": [
+        "public-2",
+        16,
+        512,
+        128
+      ],
+      "corpus": "prose",
+      "variants": {
+        "off": {
+          "tps": 3625.9440496330626,
+          "seconds": 0.5648184230000055,
+          "ttft": 0.10344282600000554,
+          "tpot": 0.0036341344960629436,
+          "spread": 0.003303874172654746,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10344282600000554,
+              "seconds": 0.5643796450000025,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10440976200000307,
+              "seconds": 0.5659448429999969,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10294795600000839,
+              "seconds": 0.5648184230000055,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10251750800000536,
+              "seconds": 0.5640787540000076,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.1039752300000032,
+              "seconds": 0.5652706670000072,
+              "gap": 1.375,
+              "exact": false
+            }
+          ],
+          "speedup": 1.0
+        },
+        "on": {
+          "tps": 3662.233512137875,
+          "seconds": 0.5592215770000024,
+          "ttft": 0.10303710099999819,
+          "tpot": 0.0035896556377953337,
+          "spread": 0.008649442723465543,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10579387499998916,
+              "seconds": 0.560877039999994,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10170898600000555,
+              "seconds": 0.5575952520000129,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.09922365399999933,
+              "seconds": 0.5560400850000065,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10410393699999076,
+              "seconds": 0.5592215770000024,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.10303710099999819,
+              "seconds": 0.5592499929999946,
+              "gap": 1.375,
+              "exact": false
+            }
+          ],
+          "speedup": 1.0100082797770928
+        }
+      },
+      "dispatch": {
+        "off": {
+          "fused_mlp": "None",
+          "integer_mlp": false
+        },
+        "on": {
+          "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2af4afcfb380>",
+          "integer_mlp": false
+        }
+      }
+    }
+  ]
+}

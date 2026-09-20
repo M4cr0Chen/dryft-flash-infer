@@ -334,3 +334,56 @@ def check_fused_add_norm():
                         raise AssertionError(f"fused add-norm k={k} b={batch} w={warps}: {err_res} {err_norm}")
                     cases += 1
     print(f"GPU fused add-norm: {cases} cases; worst relative difference vs planes path {worst:.2e}", flush=True)
+
+
+def check_separate_decode_norm():
+    """Match residual and normalized BF16 outputs across batches and plane counts."""
+    import sys
+    import torch
+    sys.path.insert(0, '/root/engine')
+    from kernels.norm import (add_rms_norm, add_rms_norm_partials,
+                              add_rms_norm_separate, add_rms_norm_partials_separate)
+
+    torch.manual_seed(812)
+    cases = 0
+    with torch.inference_mode():
+        for batch in (1, 2, 3, 4, 8, 16, 32, 64):
+            x = torch.randn(batch, 2560, device='cuda', dtype=torch.bfloat16)
+            weight = 1 + .1 * torch.randn(2560, device='cuda', dtype=torch.bfloat16)
+            delta = torch.randn_like(x)
+            reference = add_rms_norm(x, delta, weight, 1.e-6)
+            actual = add_rms_norm_separate(x, delta, weight, 1.e-6)
+            assert all(torch.equal(a, b) for a, b in zip(reference, actual)), (batch, 'direct')
+            cases += 1
+            for splits in (1, 2, 4, 8, 16):
+                planes = torch.randn(splits, batch, 2560, device='cuda', dtype=torch.float32)
+                reference = add_rms_norm_partials(x, planes, weight, 1.e-6)
+                actual = add_rms_norm_partials_separate(x, planes, weight, 1.e-6)
+                assert all(torch.equal(a, b) for a, b in zip(reference, actual)), (batch, splits)
+                cases += 1
+    print(f'GPU separate decode norm: {cases} bit-exact cases passed', flush=True)
+
+
+def check_partial_swiglu():
+    """Compare against the real CUDA reduce followed by the old SwiGLU kernel."""
+    import sys
+    import torch
+    sys.path.insert(0, '/root/engine')
+    from kernels import cuda_fp8
+    from kernels.swiglu import swiglu, swiglu_partials
+
+    assert cuda_fp8.ready()
+    reduce = cuda_fp8._module_for(1, 1).kernel('reduce_partials')
+    cases = 0
+    with torch.inference_mode():
+        for batch in (1, 2, 3, 4, 8, 16, 32, 64):
+            for splits in (1, 2, 4, 8, 16):
+                planes = torch.randn(splits, batch, 19456, device='cuda', dtype=torch.float32)
+                reduced = torch.empty(batch, 19456, device='cuda', dtype=torch.bfloat16)
+                width = reduced.numel()
+                reduce(-(-width//256), 256, planes, reduced, width, splits)
+                expected = swiglu(reduced)
+                actual = swiglu_partials(planes)
+                assert torch.equal(expected, actual), (batch, splits, (expected-actual).abs().max().item())
+                cases += 1
+    print(f'GPU partial SwiGLU: {cases} bit-exact cases passed', flush=True)
