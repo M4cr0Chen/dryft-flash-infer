@@ -55,6 +55,15 @@ and with twice the scale bytes. The attention projections are not safer than
 the MLP. Below eight bits is closed for this judge; the 4-bit kernel stays in
 the tree, default off, for a benchmark with a looser margin.
 
+### The platform agreed
+
+Commit `9ed1668` ran 4-bit qkv and o by default as an official trial (run
+`a369388d`): public-0 passed at 336.1 tok/s, public-1 and public-2 failed
+with `incorrect_output`, "the engine's tokens did not match native Qwen's
+greedy choice", and the run ended unranked after 9 minutes. The record is
+`official-int4-trial-20260920.json`. The default reverted to no 4-bit
+projections in `cb6bb56`.
+
 ## Applying the ablations, September 20
 
 Starting point: `8a4f75d` (engine identical to the ring version `43822c0`).
