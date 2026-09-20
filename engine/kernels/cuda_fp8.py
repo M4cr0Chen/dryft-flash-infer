@@ -89,6 +89,28 @@ __device__ __forceinline__ u32 int8x2_to_bf16x2(u32 w, int lo_sel, int hi_sel) {
     return r;
 }
 
+// Two nibbles (offset-8 INT4, already masked into the low four bits of two
+// bytes of ``w``) -> two bfloat16 in one word, by the same magic-constant trick.
+__device__ __forceinline__ u32 int4x2_to_bf16x2(u32 w, int lo_sel, int hi_sel) {
+    const float lo = __uint_as_float(__byte_perm(w, 0x4B000000u, lo_sel)) - 8388616.0f;
+    const float hi = __uint_as_float(__byte_perm(w, 0x4B000000u, hi_sel)) - 8388616.0f;
+    u32 r;
+    asm("cvt.rn.bf16x2.f32 %0, %1, %2;" : "=r"(r) : "f"(hi), "f"(lo));
+    return r;
+}
+
+// Fragment words for 64-block ``j`` of a group from the lane's weight words.
+// 8-bit: block j is its own 16-byte chunk. 4-bit: one chunk holds both blocks,
+// block 0 in the low nibbles and block 1 in the high nibbles of every byte.
+#if @BITS@ == 4
+#define WEIGHT_WORD(chunk_j0, chunk_j1, j, s) \
+    ((((j) == 0 ? word(chunk_j0, s) : (word(chunk_j0, s) >> 4)) & 0x0F0F0F0Fu))
+#define DEQUANT int4x2_to_bf16x2
+#else
+#define WEIGHT_WORD(chunk_j0, chunk_j1, j, s) ((j) == 0 ? word(chunk_j0, s) : word(chunk_j1, s))
+#define DEQUANT int8x2_to_bf16x2
+#endif
+
 __device__ __forceinline__ void f16x2_to_f32(u32 v, float& lo, float& hi) {
     asm("{\n\t.reg .b16 l, u;\n\tmov.b32 {l, u}, %2;\n\t"
         "cvt.f32.f16 %0, l;\n\tcvt.f32.f16 %1, u;\n}"
@@ -165,9 +187,10 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
 #if @TILED@
     // Tiled layout: [rows/16][G][half][j][g][t][16 B]. Each warp load
     // instruction reads a contiguous 512 bytes; a group is one 2 KB tile.
-    const unsigned char* w_lo = W + ((size_t)(row_lo >> 4) * G + g_begin) * 2048 + ((row_lo & 15) >> 3) * 1024 + g * 64 + t * 16;
-    const unsigned char* w_hi = W + ((size_t)(row_hi >> 4) * G + g_begin) * 2048 + ((row_hi & 15) >> 3) * 1024 + g * 64 + t * 16;
-    const int gstep = 2048, jstep = 512;
+    // 4-bit: [rows/16][G][half][g][t][16 B], both 64-blocks in one chunk, 1 KB.
+    const unsigned char* w_lo = W + ((size_t)(row_lo >> 4) * G + g_begin) * @TILE@ + ((row_lo & 15) >> 3) * (@TILE@ / 2) + g * 64 + t * 16;
+    const unsigned char* w_hi = W + ((size_t)(row_hi >> 4) * G + g_begin) * @TILE@ + ((row_hi & 15) >> 3) * (@TILE@ / 2) + g * 64 + t * 16;
+    const int gstep = @TILE@, jstep = 512;
 #else
     const unsigned char* w_lo = W + (size_t)row_lo * K + k0 + t * 16;
     const unsigned char* w_hi = W + (size_t)row_hi * K + k0 + t * 16;
@@ -186,7 +209,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
         const bool ok = p < ngroups;
         const size_t off = (size_t)p * gstep;
         #pragma unroll
-        for (int j = 0; j < 2; ++j) {
+        for (int j = 0; j < @CHUNKS@; ++j) {
             cur[p][j][0] = ok ? *reinterpret_cast<const uint4*>(w_lo + off + j * jstep) : make_uint4(0,0,0,0);
             cur[p][j][1] = ok ? *reinterpret_cast<const uint4*>(w_hi + off + j * jstep) : make_uint4(0,0,0,0);
         }
@@ -261,7 +284,7 @@ _BODY = r"""
             const bool ok = grp < ngroups;
             const size_t off = (size_t)grp * gstep;
             #pragma unroll
-            for (int j = 0; j < 2; ++j) {
+            for (int j = 0; j < @CHUNKS@; ++j) {
                 nxt[p][j][0] = ok ? *reinterpret_cast<const uint4*>(w_lo + off + j * jstep) : cur[p][j][0];
                 nxt[p][j][1] = ok ? *reinterpret_cast<const uint4*>(w_hi + off + j * jstep) : cur[p][j][1];
             }
@@ -309,13 +332,13 @@ _BODY = r"""
 #endif
                     #pragma unroll
                     for (int s = 0; s < 4; ++s) {
-                        const u32 wl = word(cur[p][j][0], s);
-                        const u32 wh = word(cur[p][j][1], s);
+                        const u32 wl = WEIGHT_WORD(cur[p][0][0], cur[p][1][0], j, s);
+                        const u32 wh = WEIGHT_WORD(cur[p][0][1], cur[p][1][1], j, s);
                         u32 a[4];
-                        a[0] = int8x2_to_bf16x2(wl, 0x7650, 0x7651);
-                        a[1] = int8x2_to_bf16x2(wh, 0x7650, 0x7651);
-                        a[2] = int8x2_to_bf16x2(wl, 0x7652, 0x7653);
-                        a[3] = int8x2_to_bf16x2(wh, 0x7652, 0x7653);
+                        a[0] = DEQUANT(wl, 0x7650, 0x7651);
+                        a[1] = DEQUANT(wh, 0x7650, 0x7651);
+                        a[2] = DEQUANT(wl, 0x7652, 0x7653);
+                        a[3] = DEQUANT(wh, 0x7652, 0x7653);
                         #pragma unroll
                         for (int nt = 0; nt < @NT@; ++nt) {
                             const u32 b0 = word(xb[nt][s >> 1], (s & 1) * 2);
@@ -336,7 +359,7 @@ _BODY = r"""
         #pragma unroll
         for (int p = 0; p < 2; ++p) {
             #pragma unroll
-            for (int j = 0; j < 2; ++j) { cur[p][j][0] = nxt[p][j][0]; cur[p][j][1] = nxt[p][j][1]; }
+            for (int j = 0; j < @CHUNKS@; ++j) { cur[p][j][0] = nxt[p][j][0]; cur[p][j][1] = nxt[p][j][1]; }
             sc[p][0] = nsc[p][0]; sc[p][1] = nsc[p][1];
         }
     }
@@ -438,19 +461,20 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
 
     // This warp's ring sits behind the staged activation.
     unsigned char* ring = reinterpret_cast<unsigned char*>(xs)
-        + (size_t)@NT@ * 8 * stride * 2 + (size_t)warp * (@RING@ * 2048);
+        + (size_t)@NT@ * 8 * stride * 2 + (size_t)warp * (@RING@ * @TILE@);
     const unsigned char* csrc[4];
     u32 cdst[4];
 #if @TILED@
-    // Tiled layout: a group is one 2 KB tile, copied verbatim (lo band, hi band).
-    const unsigned char* tile_lo = W + ((size_t)(row_lo >> 4) * G + g_begin) * 2048 + ((row_lo & 15) >> 3) * 1024;
-    const unsigned char* tile_hi = W + ((size_t)(row_hi >> 4) * G + g_begin) * 2048 + ((row_hi & 15) >> 3) * 1024;
+    // Tiled layout: a group is one tile (2 KB, or 1 KB at 4 bits), copied
+    // verbatim: @TILE@/512 chunks of 16 bytes per lane, lo band then hi band.
+    const unsigned char* tile_lo = W + ((size_t)(row_lo >> 4) * G + g_begin) * @TILE@ + ((row_lo & 15) >> 3) * (@TILE@ / 2);
+    const unsigned char* tile_hi = W + ((size_t)(row_hi >> 4) * G + g_begin) * @TILE@ + ((row_hi & 15) >> 3) * (@TILE@ / 2);
     #pragma unroll
-    for (int i = 0; i < 4; ++i) {
-        csrc[i] = (i < 2 ? tile_lo : tile_hi) + ((i & 1) * 32 + lane) * 16;
+    for (int i = 0; i < @TILE@ / 512; ++i) {
+        csrc[i] = (i < @TILE@ / 1024 ? tile_lo : tile_hi) + ((i % (@TILE@ / 1024)) * 32 + lane) * 16;
         cdst[i] = (u32)__cvta_generic_to_shared(ring) + (i * 32 + lane) * 16;
     }
-    const size_t gstep = 2048;
+    const size_t gstep = @TILE@;
 #else
     // Row-major: chunk i*32+lane of a group is row i*4+(lane>>3), piece lane&7,
     // stored with odd rows' 64-byte halves swapped so fragment reads never conflict.
@@ -472,7 +496,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
         rs_lo[s] = 0u; rs_hi[s] = 0u;
         if (live && s < ngroups) {
             #pragma unroll
-            for (int i = 0; i < 4; ++i) cp_async16(cdst[i] + s * 2048, csrc[i] + (size_t)s * gstep);
+            for (int i = 0; i < @NCOPY@; ++i) cp_async16(cdst[i] + s * @TILE@, csrc[i] + (size_t)s * gstep);
             rs_lo[s] = s_lo[s]; rs_hi[s] = s_hi[s];
         }
         cp_commit();
@@ -494,15 +518,16 @@ _RING_BODY = r"""
                 // Every group but the newest @RING@-1 has landed, so this one has.
                 CP_WAIT_PENDING(@RING@ - 1);
                 __syncwarp();
-                const unsigned char* slot = ring + s * 2048;
+                const unsigned char* slot = ring + s * @TILE@;
                 float scl_lo[2], scl_hi[2];
                 f16x2_to_f32(rs_lo[s], scl_lo[0], scl_lo[1]);
                 f16x2_to_f32(rs_hi[s], scl_hi[0], scl_hi[1]);
                 #pragma unroll
                 for (int j = 0; j < 2; ++j) {
 #if @TILED@
-                    const uint4 wlo = *reinterpret_cast<const uint4*>(slot + j * 512 + g * 64 + t * 16);
-                    const uint4 whi = *reinterpret_cast<const uint4*>(slot + 1024 + j * 512 + g * 64 + t * 16);
+                    const int jo = @BITS@ == 4 ? 0 : j * 512;
+                    const uint4 wlo = *reinterpret_cast<const uint4*>(slot + jo + g * 64 + t * 16);
+                    const uint4 whi = *reinterpret_cast<const uint4*>(slot + (@TILE@ / 2) + jo + g * 64 + t * 16);
 #else
                     const int sw = ((j * 4 + t) ^ ((g & 1) << 2)) << 4;
                     const uint4 wlo = *reinterpret_cast<const uint4*>(slot + g * 128 + sw);
@@ -521,13 +546,13 @@ _RING_BODY = r"""
                     }
                     #pragma unroll
                     for (int q = 0; q < 4; ++q) {
-                        const u32 wl = word(wlo, q);
-                        const u32 wh = word(whi, q);
+                        const u32 wl = WEIGHT_WORD(wlo, wlo, j, q);
+                        const u32 wh = WEIGHT_WORD(whi, whi, j, q);
                         u32 a[4];
-                        a[0] = int8x2_to_bf16x2(wl, 0x7650, 0x7651);
-                        a[1] = int8x2_to_bf16x2(wh, 0x7650, 0x7651);
-                        a[2] = int8x2_to_bf16x2(wl, 0x7652, 0x7653);
-                        a[3] = int8x2_to_bf16x2(wh, 0x7652, 0x7653);
+                        a[0] = DEQUANT(wl, 0x7650, 0x7651);
+                        a[1] = DEQUANT(wh, 0x7650, 0x7651);
+                        a[2] = DEQUANT(wl, 0x7652, 0x7653);
+                        a[3] = DEQUANT(wh, 0x7652, 0x7653);
                         #pragma unroll
                         for (int nt = 0; nt < @NT@; ++nt) {
                             const u32 b0 = word(xb[nt][q >> 1], (q & 1) * 2);
@@ -547,8 +572,8 @@ _RING_BODY = r"""
                 const int next = local + @RING@;
                 if (next < ngroups) {
                     #pragma unroll
-                    for (int i = 0; i < 4; ++i)
-                        cp_async16(cdst[i] + s * 2048, csrc[i] + (size_t)next * gstep);
+                    for (int i = 0; i < @NCOPY@; ++i)
+                        cp_async16(cdst[i] + s * @TILE@, csrc[i] + (size_t)next * gstep);
                     rs_lo[s] = s_lo[next]; rs_hi[s] = s_hi[next];
                 }
                 cp_commit();
@@ -853,9 +878,22 @@ _STAGES = (1,)
 
 
 def _name(warps: int, nt: int, mode: int, stage: int = 1, nshare: int = 1, ring: int = 0,
-          tiled: bool = False) -> str:
+          tiled: bool = False, bits: int = 8) -> str:
     base = f"fp8_mma_w{warps}_n{nt}_m{mode}_s{stage}_r{nshare}"
-    return base + (f"_g{ring}" if ring else "") + ("_t" if tiled else "")
+    return base + (f"_g{ring}" if ring else "") + ("_t" if tiled else "") + (f"_b{bits}" if bits != 8 else "")
+
+
+def _substitute(template: str, **values) -> str:
+    """Fill the @KEY@ holes, deriving the per-bit-width layout constants."""
+    bits = values.get("BITS", 8)
+    tiled = values.get("TILED", 0)
+    values = dict(values)
+    values.setdefault("TILE", 2048 if bits == 8 else 1024)     # bytes per warp per group, tiled
+    values.setdefault("CHUNKS", 2 if bits == 8 else 1)          # 16-byte lane chunks per group
+    values.setdefault("NCOPY", (values["TILE"] // 512) if tiled else 4)
+    for key, value in values.items():
+        template = template.replace("@" + key + "@", str(value))
+    return template
 
 
 #: Warp counts compiled for the cp.async ring kernel. Fewer than the register
@@ -864,60 +902,51 @@ def _name(warps: int, nt: int, mode: int, stage: int = 1, nshare: int = 1, ring:
 _RING_WARPS = (4, 8)
 
 
-def _ring_source(nt: int, ring: int, tiled: bool) -> str:
-    parts = [_PRELUDE]
+def _ring_source(nt: int, ring: int, tiled: bool, bits: int = 8) -> str:
+    if bits != 8 and not tiled:
+        raise ValueError("4-bit weights are stored tiled")
+    parts = [_substitute(_PRELUDE, BITS=bits)]
     for warps in _RING_WARPS:
         for mode in _MODES:
-            parts.append(
-                _RING_TEMPLATE.replace("@NAME@", _name(warps, nt, mode, 1, 1, ring, tiled))
-                .replace("@WARPS@", str(warps))
-                .replace("@THREADS@", str(warps * 32))
-                .replace("@NT@", str(nt))
-                .replace("@NSHARE@", "1")
-                .replace("@MODE@", str(mode))
-                .replace("@STAGE@", "1")
-                .replace("@RING@", str(ring))
-                .replace("@TILED@", str(int(tiled)))
-            )
+            parts.append(_substitute(
+                _RING_TEMPLATE, NAME=_name(warps, nt, mode, 1, 1, ring, tiled, bits),
+                WARPS=warps, THREADS=warps * 32, NT=nt, NSHARE=1, MODE=mode, STAGE=1,
+                RING=ring, TILED=int(tiled), BITS=bits))
     return "\n".join(parts)
 
 
-def _ring_module(nt: int, ring: int, tiled: bool = None):
+def _ring_module(nt: int, ring: int, tiled: bool = None, bits: int = 8):
     tiled = TILED if tiled is None else tiled
-    key = ("ring", nt, ring, tiled)
+    key = ("ring", nt, ring, tiled, bits)
     if key not in _modules:
-        _modules[key] = cuda_jit.Module(_ring_source(nt, ring, tiled))
+        _modules[key] = cuda_jit.Module(_ring_source(nt, ring, tiled, bits))
     return _modules[key]
 
 
 _NSHARES = (1, 2, 4)
 
 
-def _source(nt: int, nshare: int, tiled: bool) -> str:
+def _source(nt: int, nshare: int, tiled: bool, bits: int = 8) -> str:
     """Every warp count and epilogue for one tile count, row-block sharing and layout.
 
     A process serves one batch size (plus its verification widths, which
     share the tile count up to eight rows), so compiling the other tile counts
     would spend load budget on kernels that never launch.
     """
-    parts = [_PRELUDE]
-    if (nt, nshare) == (_NTS[0], 1):
+    if bits != 8 and not tiled:
+        raise ValueError("4-bit weights are stored tiled")
+    parts = [_substitute(_PRELUDE, BITS=bits)]
+    if (nt, nshare, bits) == (_NTS[0], 1, 8):
         parts.append(_REDUCE)
     for warps in _WARPS:
         if warps % nshare:
             continue
         for mode in _MODES:
             for stage in _STAGES:
-                parts.append(
-                    _TEMPLATE.replace("@NAME@", _name(warps, nt, mode, stage, nshare, 0, tiled))
-                    .replace("@WARPS@", str(warps))
-                    .replace("@THREADS@", str(warps * 32))
-                    .replace("@NT@", str(nt))
-                    .replace("@NSHARE@", str(nshare))
-                    .replace("@MODE@", str(mode))
-                    .replace("@STAGE@", str(stage))
-                    .replace("@TILED@", str(int(tiled)))
-                )
+                parts.append(_substitute(
+                    _TEMPLATE, NAME=_name(warps, nt, mode, stage, nshare, 0, tiled, bits),
+                    WARPS=warps, THREADS=warps * 32, NT=nt, NSHARE=nshare, MODE=mode,
+                    STAGE=stage, TILED=int(tiled), BITS=bits))
     return "\n".join(parts)
 
 
@@ -939,18 +968,18 @@ def _fused_module(warps: int, nt: int, stage: int, tail: int = 1):
     key = ("fused", warps, nt, stage, tail)
     if key not in _modules:
         threads = warps * 32
-        source = _PRELUDE + _FUSED.replace("@NAME@", _fused_name(warps, nt, stage, tail)) \
+        source = _substitute(_PRELUDE, BITS=8) + _FUSED.replace("@NAME@", _fused_name(warps, nt, stage, tail)) \
             .replace("@WARPS@", str(warps)).replace("@THREADS@", str(threads)) \
             .replace("@NT@", str(nt)).replace("@STAGE@", str(stage)).replace("@TAIL@", str(tail))
         _modules[key] = cuda_jit.Module(source)
     return _modules[key]
 
 
-def _module_for(nt: int, nshare: int = 1, tiled: bool = None):
+def _module_for(nt: int, nshare: int = 1, tiled: bool = None, bits: int = 8):
     tiled = TILED if tiled is None else tiled
-    key = (nt, nshare, tiled)
+    key = (nt, nshare, tiled, bits)
     if key not in _modules:
-        _modules[key] = cuda_jit.Module(_source(nt, nshare, tiled))
+        _modules[key] = cuda_jit.Module(_source(nt, nshare, tiled, bits))
     return _modules[key]
 
 
@@ -977,33 +1006,40 @@ def _permutation(device) -> torch.Tensor:
     return torch.tensor(order, dtype=torch.int64, device=device)
 
 
-def quantize(weight: torch.Tensor, group: int = GROUP):
-    """``[out, in]`` bfloat16 -> offset-128 INT8 bytes plus ``[out, in/group]`` fp16 scales.
+def quantize(weight: torch.Tensor, group: int = GROUP, bits: int = 8):
+    """``[out, in]`` bfloat16 -> offset INT8 bytes plus ``[out, in/group]`` fp16 scales.
 
     Symmetric, round to nearest, one scale per 64 values from the block maximum.
+    ``bits`` 8 stores -127..127 offset by 128; ``bits`` 4 stores -7..7 offset by
+    8, one value per byte here, packed to nibbles by ``prepare``. The returned
+    triple is ``(bytes, scales, bits)``.
     """
+    if bits not in (8, 4):
+        raise ValueError("weights are 8 or 4 bits")
     out, inner = weight.shape
     if inner % group:
         raise ValueError(f"{inner} is not a multiple of {group}")
+    limit, offset = (127.0, 128.0) if bits == 8 else (7.0, 8.0)
     tiles = weight.float().view(out, inner // group, group)
     # The scale the kernel multiplies by is the fp16 one, so quantise against
     # that. Nudging it up by one fp16 ulp before rounding keeps the block
     # maximum from clipping when the conversion rounds down. A least-squares
     # grid search over the scale bought about 1% error and cost ten seconds
     # of load budget in kernel launches; it is not worth it.
-    scale = (tiles.abs().amax(dim=2, keepdim=True) / 127.0).clamp(min=1e-12)
+    scale = (tiles.abs().amax(dim=2, keepdim=True) / limit).clamp(min=1e-12)
     scale = (scale * (1.0 + 2.0 ** -10)).to(torch.float16)
-    q = torch.round(tiles / scale.float()).clamp(-127.0, 127.0)
-    packed = (q + 128.0).to(torch.uint8).view(out, inner).contiguous()
-    return packed, scale.squeeze(2).contiguous()
+    q = torch.round(tiles / scale.float()).clamp(-limit, limit)
+    packed = (q + offset).to(torch.uint8).view(out, inner).contiguous()
+    return packed, scale.squeeze(2).contiguous(), bits
 
 
 def dequantize(packed) -> torch.Tensor:
     """The bfloat16 weight the kernel effectively multiplies by."""
-    weight, scale = packed
+    weight, scale = packed[0], packed[1]
+    bits = packed[2] if len(packed) > 2 else 8
     rows, k = weight.shape
     blocks = scale.shape[1]
-    q = weight.float() - 128.0
+    q = weight.float() - (128.0 if bits == 8 else 8.0)
     return (q.view(rows, blocks, k // blocks) * scale.float()[:, :, None]).view(rows, k).to(torch.bfloat16)
 
 
@@ -1016,9 +1052,9 @@ class Prepared:
     either way, for kernels that address rows directly.
     """
 
-    __slots__ = ("weight", "scale", "rows", "k", "groups", "tiled")
+    __slots__ = ("weight", "scale", "rows", "k", "groups", "tiled", "bits")
 
-    def __init__(self, packed: torch.Tensor, scale: torch.Tensor, tiled: bool = None):
+    def __init__(self, packed: torch.Tensor, scale: torch.Tensor, tiled: bool = None, bits: int = 8):
         rows, k = packed.shape
         if k % 128:
             raise ValueError(f"K={k} is not a multiple of 128")
@@ -1030,10 +1066,21 @@ class Prepared:
         cols = (torch.arange(k // 64, device=packed.device)[:, None] * 64 + perm[None, :]).flatten()
         weight = packed.view(torch.uint8)[:, cols]
         self.tiled = TILED if tiled is None else tiled
-        if self.tiled:
-            # (tile, half, g, group, j, t, byte) -> (tile, group, half, j, g, t, byte)
-            weight = weight.view(rows // 16, 2, 8, k // 128, 2, 4, 16).permute(0, 3, 1, 4, 2, 5, 6)
-        self.weight = weight.contiguous().view(rows, k)
+        self.bits = bits
+        if bits == 4:
+            if not self.tiled:
+                raise ValueError("4-bit weights are stored tiled")
+            # Both 64-blocks of a group share one 16-byte chunk per lane:
+            # block 0 in the low nibbles, block 1 in the high nibbles.
+            # (tile, half, g, group, j, t, byte) -> (tile, group, half, g, t, byte)
+            w = weight.view(rows // 16, 2, 8, k // 128, 2, 4, 16)
+            weight = (w[:, :, :, :, 0] | (w[:, :, :, :, 1] << 4)).permute(0, 3, 1, 2, 4, 5)
+            self.weight = weight.contiguous().view(rows, k // 2)
+        else:
+            if self.tiled:
+                # (tile, half, g, group, j, t, byte) -> (tile, group, half, j, g, t, byte)
+                weight = weight.view(rows // 16, 2, 8, k // 128, 2, 4, 16).permute(0, 3, 1, 4, 2, 5, 6)
+            self.weight = weight.contiguous().view(rows, k)
         # Two adjacent f16 block scales form the u32 the kernel loads per 128 group.
         self.scale = scale.to(torch.float16).contiguous()
         self.rows, self.k = rows, k
@@ -1041,6 +1088,8 @@ class Prepared:
 
     def row_major(self) -> torch.Tensor:
         """The fragment-permuted ``[rows, K]`` weight regardless of storage layout."""
+        if self.bits != 8:
+            raise ValueError("4-bit weights have no 8-bit row-major form")
         if not self.tiled:
             return self.weight
         tiles = self.weight.view(self.rows // 16, self.groups, 2, 2, 8, 4, 16)
@@ -1051,9 +1100,10 @@ class Prepared:
 
 
 def prepare(packed, tiled: bool = None) -> Prepared:
-    """``packed`` is ``(uint8 weight, fp16 scales)`` from ``quantize``."""
-    weight, scale = packed
-    return Prepared(weight, scale, tiled)
+    """``packed`` is ``(uint8 weight, fp16 scales[, bits])`` from ``quantize``."""
+    weight, scale = packed[0], packed[1]
+    bits = packed[2] if len(packed) > 2 else 8
+    return Prepared(weight, scale, tiled, bits)
 
 
 def _ntiles(batch: int, nshare: int = 1) -> int:
@@ -1066,9 +1116,10 @@ def _ntiles(batch: int, nshare: int = 1) -> int:
     raise ValueError(f"batch {batch} exceeds {_NTS[-1] * 8 * nshare} rows")
 
 
-def _shared_bytes(nt: int, gps: int, nshare: int = 1, warps: int = 0, ring: int = 0) -> int:
+def _shared_bytes(nt: int, gps: int, nshare: int = 1, warps: int = 0, ring: int = 0,
+                  bits: int = 8) -> int:
     """Staged activation, plus the per-warp weight rings when ``ring`` groups are used."""
-    return nt * nshare * 8 * (gps * 128 + 8) * 2 + warps * ring * 2048
+    return nt * nshare * 8 * (gps * 128 + 8) * 2 + warps * ring * (2048 if bits == 8 else 1024)
 
 
 #: Hopper allows up to 227 KiB of dynamic shared memory per block.
@@ -1092,7 +1143,7 @@ def _plan(prepared: Prepared, batch: int, config):
     splitk = max(1, min(splitk, groups))
     gps = -(-groups // splitk)
     if stage:
-        while _shared_bytes(nt, gps, nshare, warps, ring) > _SHARED_LIMIT and gps > 1:
+        while _shared_bytes(nt, gps, nshare, warps, ring, prepared.bits) > _SHARED_LIMIT and gps > 1:
             splitk += 1
             gps = -(-groups // splitk)
     splitk = -(-groups // gps)
@@ -1109,12 +1160,12 @@ def _launch(mode, prepared, x, out, n_eff, config):
     rows_per_block = (warps // nshare) * (8 if mode == 2 else 16)
     rowblocks = -(-n_eff // rows_per_block)
     if ring:
-        kernel = _ring_module(nt, ring, prepared.tiled).kernel(
-            _name(warps, nt, mode, 1, 1, ring, prepared.tiled))
+        kernel = _ring_module(nt, ring, prepared.tiled, prepared.bits).kernel(
+            _name(warps, nt, mode, 1, 1, ring, prepared.tiled, prepared.bits))
     else:
-        kernel = _module_for(nt, nshare, prepared.tiled).kernel(
-            _name(warps, nt, mode, stage, nshare, 0, prepared.tiled))
-    kernel.set_shared(_shared_bytes(nt, gps, nshare, warps, ring) if stage else 0)
+        kernel = _module_for(nt, nshare, prepared.tiled, prepared.bits).kernel(
+            _name(warps, nt, mode, stage, nshare, 0, prepared.tiled, prepared.bits))
+    kernel.set_shared(_shared_bytes(nt, gps, nshare, warps, ring, prepared.bits) if stage else 0)
     kernel(rowblocks * splitk, warps * 32,
            prepared.weight, prepared.scale, x, out,
            n_eff, k, batch, prepared.groups, gps, splitk)

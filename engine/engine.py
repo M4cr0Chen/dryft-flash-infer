@@ -68,6 +68,10 @@ FP8_LM_HEAD = os.environ.get("DRYFT_FP8_LM_HEAD", "on") == "on"
 #: race says. Comma separated from qkv, o, gate_up, down, lm_head.
 FP8_PROJECTIONS = set(filter(None, os.environ.get(
     "DRYFT_FP8_PROJECTIONS", "qkv,o,gate_up,down,lm_head").split(",")))
+#: Projections whose decode weights are 4-bit (group-64 fp16 scales) instead
+#: of 8-bit. Half the bytes, four times the quantisation error; which ones can
+#: afford it is a question for teacher-forced replay, so the default is none.
+INT4_PROJECTIONS = set(filter(None, os.environ.get("DRYFT_INT4_PROJECTIONS", "").split(",")))
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
@@ -486,7 +490,11 @@ class Engine:
                 ("lm_head", [self.embed] if FP8_LM_HEAD else []),
             ):
                 if weights and name in FP8_PROJECTIONS:
-                    self.quantised[name] = [cuda_fp8.prepare(cuda_fp8.quantize(w)) for w in weights]
+                    bits = 4 if name in INT4_PROJECTIONS else 8
+                    self.quantised[name] = [cuda_fp8.prepare(cuda_fp8.quantize(w, bits=bits))
+                                            for w in weights]
+                    if bits == 4:
+                        print(f"engine: {name:8s} 4-bit weights", file=sys.stderr)
             torch.cuda.empty_cache()
         except Exception:
             traceback.print_exc()
@@ -613,6 +621,8 @@ class Engine:
                 continue
             if not self.quantised.get(name):
                 continue
+            if self.quantised[name][0].bits != 8:
+                continue   # the native W8A8 path repacks 8-bit weights
             if name not in self.integer_operands:
                 self.integer_operands[name] = [cuda_int8.Prepared(w) for w in self.quantised[name]]
             operands = self.integer_operands[name]
@@ -730,7 +740,7 @@ class Engine:
             operands = self.operand["gate_up"]
             configs = cuda_fp8.SWIGLU_CONFIGS
             fused = cuda_fp8.gate_up_swiglu
-            tolerance = 0.08
+            tolerance = 0.08 if operands[0].bits == 8 else 0.3
         else:
             if not (cuda_mlp is not None and cuda_mlp.ready()):
                 return

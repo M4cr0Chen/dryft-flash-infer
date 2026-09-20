@@ -449,3 +449,42 @@ def test_tiled_weight_layout_round_trips():
     assert torch.equal(tile[0, 0, 3, 2], rows[3, 0, 2])        # half 0 -> rows 0-7
     assert torch.equal(tile[1, 1, 5, 1], rows[13, 1, 1])       # half 1 -> rows 8-15
     assert tiled.bytes_moved() == rowmajor.bytes_moved()
+
+
+def test_int4_weights_pack_two_values_per_byte():
+    """4-bit quantisation stores block 0 in the low nibbles and block 1 in the high nibbles."""
+    import importlib
+
+    torch.manual_seed(1)
+    cuda_fp8 = importlib.import_module("kernels.cuda_fp8")
+
+    weight = torch.randn(32, 256, dtype=torch.bfloat16)
+    packed = cuda_fp8.quantize(weight, bits=4)
+    bytes_, scale, bits = packed
+    assert bits == 4 and bytes_.min() >= 1 and bytes_.max() <= 15
+    exact = cuda_fp8.dequantize(packed).float()
+    rel = ((exact - weight.float()).norm() / weight.float().norm()).item()
+    assert 0.02 < rel < 0.2
+    # Every value is within half a step of its group's scale, plus the bf16
+    # rounding of the dequantised product.
+    step = scale.float().repeat_interleave(64, dim=1)
+    assert ((exact - weight.float()).abs() <= step * 0.5 + exact.abs() * 2 ** -8 + 1e-6).all()
+
+    eight = cuda_fp8.prepare(cuda_fp8.quantize(weight), tiled=True)
+    four = cuda_fp8.prepare(packed, tiled=True)
+    assert four.bits == 4 and four.weight.shape == (32, 128)
+    assert four.weight.numel() * 2 == eight.weight.numel()
+    assert four.bytes_moved() == four.weight.numel() + four.scale.numel() * 2
+    # Tile 0, group 0: the 8-bit tile is [half][j][g][t][16 B]; the 4-bit tile
+    # is [half][g][t][16 B] with j folded into nibbles. Compare via the
+    # offset-8 values the 8-bit layout carries offset by 128.
+    tile8 = eight.weight.view(2, 2, 2, 2, 8, 4, 16)[0, 0]      # half, j, g, t, byte
+    tile4 = four.weight.view(2, 2, 2, 8, 4, 16)[0, 0]          # half, g, t, byte
+    values8 = cuda_fp8.quantize(weight, bits=4)[0]
+    # Rebuild what the 8-bit tile would hold for the 4-bit codes by re-preparing them.
+    codes = cuda_fp8.prepare((values8, scale, 8), tiled=True).weight.view(2, 2, 2, 2, 8, 4, 16)[0, 0]
+    low = tile4 & 0x0F
+    high = tile4 >> 4
+    assert torch.equal(low, codes[:, 0]) and torch.equal(high, codes[:, 1])
+    with pytest.raises(ValueError):
+        cuda_fp8.prepare(packed, tiled=False)

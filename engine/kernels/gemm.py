@@ -190,7 +190,9 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 3, packed=None,
                     # This projection check catches gross implementation errors.
                     # FP8's coarser rounding needs separate end-to-end replay;
                     # passing this local bound does not establish token validity.
-                    if not agrees(runner(x, packed[0]), tolerance=0.08):
+                    # 4-bit weights sit further from the bf16 reference; the
+                    # margin they leave is measured by replay, not here.
+                    if not agrees(runner(x, packed[0]), tolerance=0.08 if packed[0].bits == 8 else 0.3):
                         continue
                 except Exception:
                     continue

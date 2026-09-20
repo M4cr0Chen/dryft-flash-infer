@@ -61,6 +61,7 @@ image = (
     .add_local_file("bench/fp8_mma_probe.py", "/root/fp8_mma_probe.py")
     .add_local_file("bench/fused_probe.py", "/root/fused_probe.py")
     .add_local_file("bench/latency_probe.py", "/root/latency_probe.py")
+    .add_local_file("bench/int4_probe.py", "/root/int4_probe.py")
     .add_local_file("bench/gemm_bisect.py", "/root/gemm_bisect.py")
     .add_local_file("bench/tiled_probe.py", "/root/tiled_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
@@ -192,7 +193,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
                       candidate_fp8: str = "on", short_draft: int = 2,
                       long_context: bool = False, candidate_kv: str = "bf16",
                       baseline_fp8: str = "off", candidate_int8_mma: str = "off",
-                      baseline_int8_mma: str = "off"):
+                      baseline_int8_mma: str = "off", candidate_int4: str = ""):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -203,7 +204,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
-                            check_fp8_mma, check_kv_int8, check_fused_add_norm,
+                            check_fp8_mma, check_kv_int8, check_fused_add_norm, check_int4,
                             check_separate_decode_norm, check_partial_swiglu)
 
     _describe_gpu(require_h100=True)
@@ -216,6 +217,8 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         check_fp8()
         check_fp8_mma()
         check_fused_add_norm()
+        if candidate_int4:
+            check_int4()
     results = {"baseline": [], "candidate": []}
     shapes = list(PUBLIC_SHAPES)
     if long_context:
@@ -226,6 +229,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
             os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else baseline_fp8
             os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
             os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else baseline_int8_mma
+            os.environ["DRYFT_INT4_PROJECTIONS"] = candidate_int4 if label == "candidate" else ""
             os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
@@ -242,7 +246,8 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
 def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json",
             candidate_fp8: str = "on", short_draft: int = 2,
             long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
-            candidate_int8_mma: str = "off", baseline_int8_mma: str = "off"):
+            candidate_int8_mma: str = "off", baseline_int8_mma: str = "off",
+            candidate_int4: str = ""):
     import hashlib
     import json
     import subprocess
@@ -270,13 +275,15 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "candidate_short_draft": short_draft,
         "candidate_int8_mma": candidate_int8_mma,
         "baseline_int8_mma": baseline_int8_mma,
+        "candidate_int4": candidate_int4,
         "long_context": long_context,
     }
     results = compare_benchmark.remote(samples=samples, corpus=corpus,
                                        candidate_fp8=candidate_fp8, short_draft=short_draft,
                                        long_context=long_context, candidate_kv=candidate_kv,
                                        baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma,
-                                       baseline_int8_mma=baseline_int8_mma)
+                                       baseline_int8_mma=baseline_int8_mma,
+                                       candidate_int4=candidate_int4)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -870,19 +877,32 @@ def quant_probe(prompt_len: int = 512, prompts: int = 4):
             [corpus[at : at + prompt_len]], dtype=torch.int64, device="cuda"
         )
         batches.append((ids, logits_for(ids)))
-    print(f"reference logits: {prompts} x {prompt_len} positions", flush=True)
+    torch.cuda.empty_cache()
+    print(f"reference logits: {prompts} x {prompt_len} positions; "
+          f"{torch.cuda.memory_allocated() / 2**30:.1f} GiB allocated", flush=True)
 
+    @torch.no_grad()
     def quantise(w, dtype, group=0):
-        """Round-trip through the format. group=0 is per output channel."""
-        limit = 127.0 if dtype == torch.int8 else torch.finfo(dtype).max
+        """Round-trip through the format. group=0 is per output channel.
+
+        ``dtype`` is a torch dtype, or an int for symmetric integers of that
+        many bits (6 -> levels -31..31, 4 -> -7..7), the way the decode kernel
+        would store them with one fp16 scale per group.
+        """
+        if isinstance(dtype, int):
+            limit = float(2 ** (dtype - 1) - 1)
+            fmt = lambda v: torch.round(v).clamp(-limit, limit)
+        else:
+            limit = 127.0 if dtype == torch.int8 else torch.finfo(dtype).max
+            fmt = lambda v: v.clamp(-limit, limit).to(dtype).to(w.dtype)
         out, inner = w.shape
         if group and inner % group == 0:
-            tile = w.view(out, inner // group, group)
-            scale = (tile.abs().amax(dim=2, keepdim=True) / limit).clamp(min=1e-12)
-            back = (tile / scale).clamp(-limit, limit).to(dtype).to(w.dtype) * scale
+            tile = w.float().view(out, inner // group, group)
+            scale = (tile.abs().amax(dim=2, keepdim=True) / limit).clamp(min=1e-12).half().float()
+            back = fmt(tile / scale) * scale
             return back.view(out, inner).to(w.dtype)
-        scale = (w.abs().amax(dim=1, keepdim=True) / limit).clamp(min=1e-12)
-        return ((w / scale).clamp(-limit, limit).to(dtype).to(w.dtype) * scale).to(w.dtype)
+        scale = (w.float().abs().amax(dim=1, keepdim=True) / limit).clamp(min=1e-12)
+        return (fmt(w.float() / scale) * scale).to(w.dtype)
 
     originals = [
         (layer, name, getattr(layer, name).clone())
@@ -890,23 +910,33 @@ def quant_probe(prompt_len: int = 512, prompts: int = 4):
         for name in ("qkv", "o", "gate_up", "down")
     ]
 
-    F8 = torch.float8_e4m3fn
+    ALL, MLP, ATTN = ("qkv", "o", "gate_up", "down"), ("gate_up", "down"), ("qkv", "o")
     plans = [
-        ("fp8 per-channel   all",      F8, 0,   ("qkv", "o", "gate_up", "down")),
-        ("fp8 group-128     all",      F8, 128, ("qkv", "o", "gate_up", "down")),
-        ("fp8 group-64      all",      F8, 64,  ("qkv", "o", "gate_up", "down")),
-        ("fp8 group-32      all",      F8, 32,  ("qkv", "o", "gate_up", "down")),
-        ("fp8 group-128 mlp only",     F8, 128, ("gate_up", "down")),
-        ("fp8 group-64  mlp only",     F8, 64,  ("gate_up", "down")),
-        ("int8 group-128    all", torch.int8, 128, ("qkv", "o", "gate_up", "down")),
+        ("int8 group-64     all", 8, 64, ALL),      # what decode runs today
+        ("int6 group-64     all", 6, 64, ALL),
+        ("int6 group-32     all", 6, 32, ALL),
+        ("int6 group-64 mlp only", 6, 64, MLP),
+        ("int6 group-64 attn only", 6, 64, ATTN),
+        ("int4 group-64     all", 4, 64, ALL),
+        ("int4 group-32     all", 4, 32, ALL),
+        ("int4 group-64 mlp only", 4, 64, MLP),
+        ("int4 group-64 attn only", 4, 64, ATTN),
+        ("int4 group-32 attn only", 4, 32, ATTN),
+        ("int4 g32 attn + int8 g64 mlp", (4, 8), 32, ALL),
     ]
     saved = {"qkv": 1.134, "o": 0.755, "gate_up": 3.586, "down": 1.793}
     for label, dtype, group, targets in plans:
         for layer, name, original in originals:
-            setattr(layer, name,
-                    quantise(original, dtype, group) if name in targets else original)
+            if name not in targets:
+                setattr(layer, name, original)
+            elif isinstance(dtype, tuple):   # (attention bits, MLP bits); MLP keeps group 64
+                mixed = dtype[0] if name in ATTN else dtype[1]
+                setattr(layer, name, quantise(original, mixed, group if name in ATTN else 64))
+            else:
+                setattr(layer, name, quantise(original, dtype, group))
         head = engine.embed
-        shrink = sum(saved[n] for n in targets) / 2
+        bits = dtype if isinstance(dtype, int) else 8
+        shrink = sum(saved[n] * (2 - bits / 8) / 2 for n in targets)
 
         worst = 0.0
         flips = total = 0
@@ -1664,6 +1694,22 @@ def kv_checks():
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def int4_probe(batches: str = "1,4,16,32"):
+    """4-bit against 8-bit decode weights per projection, correctness first, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/int4_probe.py", batches],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in result.stdout.splitlines():
+        if not line.startswith("RESULT_JSON="):
+            print(line, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def tiled_probe():
     """The decode GEMM over a tiled weight layout against row-major, in a fresh process."""
     import subprocess

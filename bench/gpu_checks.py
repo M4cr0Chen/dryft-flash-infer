@@ -387,3 +387,62 @@ def check_partial_swiglu():
                 assert torch.equal(expected, actual), (batch, splits, (expected-actual).abs().max().item())
                 cases += 1
     print(f'GPU partial SwiGLU: {cases} bit-exact cases passed', flush=True)
+
+
+def check_int4():
+    """The 4-bit weight path against the dequantised weight: every config, every epilogue."""
+    import sys
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root/engine")
+    from kernels import cuda_fp8
+    from kernels.swiglu import swiglu
+
+    if not cuda_fp8.ready():
+        raise AssertionError("cuda_fp8 did not compile")
+    torch.manual_seed(71)
+    cases, worst = 0, 0.0
+    for n, k in ((6144, 2560), (2560, 4096), (2560, 9728), (19456, 2560)):
+        weight = torch.randn(n, k, dtype=torch.bfloat16, device="cuda") * 0.02
+        packed = cuda_fp8.quantize(weight, bits=4)
+        assert packed[0].min().item() >= 1 and packed[0].max().item() <= 15
+        prepared = cuda_fp8.prepare(packed)
+        assert prepared.bits == 4 and prepared.weight.shape == (n, k // 2)
+        assert prepared.bytes_moved() < cuda_fp8.prepare(cuda_fp8.quantize(weight)).bytes_moved() * 0.6
+        exact = cuda_fp8.dequantize(packed)
+        rel = ((exact.float() - weight.float()).norm() / weight.float().norm()).item()
+        if not 0.02 < rel < 0.2:
+            raise AssertionError(f"4-bit dequantised weight is {rel:.3f} from the original")
+        for batch in (1, 3, 4, 8, 16, 17, 32):
+            x = torch.randn(batch, k, dtype=torch.bfloat16, device="cuda")
+            reference = F.linear(x, exact).float()
+            scale = reference.abs().max().item()
+            for config in cuda_fp8.CONFIGS:
+                if not cuda_fp8.applicable(config, batch):
+                    continue
+                out = cuda_fp8.matmul(x, prepared, config=config).float()
+                err = (out - reference).abs().max().item() / scale
+                worst = max(worst, err)
+                if not torch.isfinite(out).all() or err > 1e-2:
+                    raise AssertionError(f"int4 n={n} k={k} b={batch} {config}: rel err {err}")
+                if cuda_fp8.splits(prepared, batch, config) > 1:
+                    planes = cuda_fp8.matmul_partials(x, prepared, config=config)
+                    err = (planes.sum(0) - reference).abs().max().item() / scale
+                    if err > 1e-2:
+                        raise AssertionError(f"int4 planes n={n} k={k} b={batch} {config}: rel err {err}")
+                cases += 1
+            if n == 19456:
+                want = swiglu(F.linear(x, exact))
+                for config in cuda_fp8.SWIGLU_CONFIGS:
+                    if not cuda_fp8.applicable(config, batch, swiglu=True):
+                        continue
+                    got = cuda_fp8.gate_up_swiglu(x, prepared, config=config)
+                    err = (got.float() - want.float()).abs().max().item() / (want.float().abs().max().item() or 1.0)
+                    if not torch.isfinite(got).all() or err > 2e-2:
+                        raise AssertionError(f"int4 swiglu b={batch} {config}: rel err {err}")
+                    cases += 1
+        del weight, packed, prepared, exact
+        torch.cuda.empty_cache()
+    print(f"GPU INT4: {cases} projection/plane/SwiGLU cases passed; max relative error={worst:.2e}",
+          flush=True)

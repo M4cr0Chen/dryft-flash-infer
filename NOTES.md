@@ -2,6 +2,59 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Below eight bits: a 4-bit kernel that works and a margin that does not, September 20
+
+Starting point: `31bf1c0`, official 1212.1 tok/s. The question was whether
+INT6 or INT4 weights could pass the 2.0-logit replay margin.
+
+### The kernel
+
+`cuda_fp8.quantize(w, bits=4)` stores -7..7 offset by 8 with the same 64-wide
+fp16 scales; `Prepared` packs a group's two 64-blocks into one 16-byte lane
+chunk (block 0 low nibbles, block 1 high), a 1 KB tile per warp per group.
+The register and ring kernels take `@BITS@`, dequantise nibbles with the same
+magic-constant trick (`- 8388616.0f`), and are otherwise unchanged;
+`DRYFT_INT4_PROJECTIONS=qkv,o` selects projections. The native W8A8 path
+skips 4-bit projections. `bench/gpu_checks.py::check_int4` passes 336 cases
+(every race config, planes, SwiGLU, batches 1-32) at 6.9e-3 worst relative
+error against the dequantised weight. Timings (`bench/int4_probe.py`):
+
+| Projection | b1 | b4 | b16 | b32 |
+| --- | ---: | ---: | ---: | ---: |
+| qkv | 1.19x | 1.18x | 1.18x | 1.08x |
+| o | 1.21x | 1.19x | 1.15x | 1.09x |
+| gate/up | 1.25x | 1.27x | 1.28x | 1.05x |
+| down | 1.19x | 1.16x | 1.18x | 1.03x |
+| LM head | 1.38x | 1.48x | 1.21x | 1.09x |
+
+Half the bytes buys a fifth to a quarter of the time, because the kernel is
+not bandwidth-bound; at batch 32 almost nothing.
+
+### The margin
+
+`bench/modal_bench.py::quant_probe` fake-quantises the decode weights in
+place and replays six 1024-token corpus prompts against the exact model,
+reporting the worst tie gap (the judge's quantity; margin 2.0):
+
+| Format | Projections | Worst gap | Argmax flips / 6144 |
+| --- | --- | ---: | ---: |
+| INT8 group-64 | all | 0.688 | 99 |
+| INT6 group-64 | all | 15.375 | 264 |
+| INT6 group-32 | all | 3.500 | 241 |
+| INT6 group-64 | MLP only | 8.125 | 244 |
+| INT6 group-64 | attention only | 7.750 | 158 |
+| INT4 group-64 | all | 23.094 | 1079 |
+| INT4 group-32 | all | 22.656 | 987 |
+| INT4 group-64 | MLP only | 23.094 | 927 |
+| INT4 group-64 | attention only | 15.062 | 622 |
+| INT4 group-32 | attention only | 27.938 | 534 |
+
+No subset of projections passes at six bits, let alone four; the closest is
+INT6 with 32-wide groups over everything at 3.5, still outside the margin
+and with twice the scale bytes. The attention projections are not safer than
+the MLP. Below eight bits is closed for this judge; the 4-bit kernel stays in
+the tree, default off, for a benchmark with a looser margin.
+
 ## Applying the ablations, September 20
 
 Starting point: `8a4f75d` (engine identical to the ring version `43822c0`).
