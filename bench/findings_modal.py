@@ -41,6 +41,7 @@ def main(shape_set:str='core',samples:int=5,corpus:str='all',panel:str='pair',
         'long':[('coverage-long',1,4096,65),('wide-long-output',32,512,128),
                 ('wide-prefill',16,4096,16)],
         'wide':[('wide-long-output',32,512,128)],
+        'large-batch':[('coverage-64',64,256,32)],
         'public':[('public-0',1,512,32),('public-1',4,2048,32),('public-2',16,512,128)],
     }
     digest=hashlib.sha256()

@@ -1,0 +1,141 @@
+{
+  "started_at": "2026-09-20T08:33:10.232843+00:00",
+  "engine_sha256": "ead1fbac77970fe22bb01fdd681f9266a06cc6082070a837d109e1fab57edd98",
+  "samples": 5,
+  "results": [
+    {
+      "shape": [
+        "coverage-64",
+        64,
+        256,
+        32
+      ],
+      "corpus": "prose",
+      "panel": "pair",
+      "variants": {
+        "baseline": {
+          "tps": 5395.712277742201,
+          "seconds": 0.3795606390000046,
+          "ttft": 0.21412996500000503,
+          "tpot": 0.0053343811935484325,
+          "spread": 0.019890010249447036,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.21116861000000142,
+              "seconds": 0.375595195999999,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.21133305599999375,
+              "seconds": 0.3760890449999934,
+              "gap": 0.1875,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.21412996500000503,
+              "seconds": 0.3795606390000046,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.2145878709999991,
+              "seconds": 0.3799536880000005,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.21694873799999925,
+              "seconds": 0.3831446609999958,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            }
+          ],
+          "speedup": 1.0
+        },
+        "all": {
+          "tps": 5476.0468872076435,
+          "seconds": 0.37399241499999647,
+          "ttft": 0.2097795999999974,
+          "tpot": 0.005311937322580485,
+          "spread": 0.005682075129786632,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.20861238300000196,
+              "seconds": 0.37399241499999647,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.21068575199999628,
+              "seconds": 0.3754503629999988,
+              "gap": 0.1875,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.20897472499999736,
+              "seconds": 0.37332530999999847,
+              "gap": 0.375,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.2097795999999974,
+              "seconds": 0.3734125159999948,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            },
+            {
+              "ttft": 0.21054040799999996,
+              "seconds": 0.375210464999995,
+              "gap": 0.125,
+              "exact": false,
+              "speculation": null
+            }
+          ],
+          "speedup": 1.0148886014172458
+        }
+      },
+      "dispatch": {
+        "baseline": {
+          "attention_splits": 1,
+          "integer_mlp": false,
+          "families": {
+            "qkv": "bf16",
+            "o": "bf16",
+            "gate_up": "bf16",
+            "down": "bf16",
+            "lm_head": "bf16"
+          },
+          "short_target": 1.15
+        },
+        "all": {
+          "attention_splits": 1,
+          "integer_mlp": false,
+          "families": {
+            "qkv": "bf16",
+            "o": "bf16",
+            "gate_up": "bf16",
+            "down": "bf16",
+            "lm_head": "bf16"
+          },
+          "short_target": 1.15
+        }
+      },
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "elapsed_seconds": 51.929135469
+    }
+  ]
+}

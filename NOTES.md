@@ -67,7 +67,19 @@ combined, and coverage experiments. `partial_swiglu_study.py` isolates the new
 consumer. The first broad norm-separation candidate's batch-32 regression is
 retained in `findings-wide-20260920.json`; it is not the final dispatch policy.
 
-Official result pending for this candidate.
+### Official result
+
+Commit `b8ed20c`, submission `e33130aa-ca56-45bd-b011-bc3247832751`, run
+`3196c38d-aabe-4c41-ac6e-b7d62e8cdf3c`: **1212.0916 tok/s, ranked**, all
+workloads passed. This improves the ring version's previous best of 1189.4340
+by **22.7 tok/s (+1.90%)**. Official public throughput was 316.9 / 585.5 /
+3672.6 tok/s. The official result is retained in `official-findings-20260920.json`.
+
+Additional edge checks completed during the official run: batch 64 at 256/32,
+batch 32 at 512/128, and batch 16 at 4096/16 all pass replay and spread checks.
+The last, prefill-heavy case is approximately flat; the norm dispatch correction
+also keeps the longer batch-32 case flat rather than regressing it. Results are
+in `findings-final-large-batch-20260920.json` and `findings-final-long-20260920.json`.
 
 ## Where the decode GEMM's time goes, and a tiled layout with a shallow ring, September 20
 
