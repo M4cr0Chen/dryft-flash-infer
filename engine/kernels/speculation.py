@@ -3,6 +3,9 @@
 Each width owns its tuned operands, buffers and graph. Only target-confirmed
 drafts are accepted. Quantized target outputs remain subject to the judge's
 native teacher-forced margin; speculation does not repair quantization error.
+
+Every width races only the weight family ordinary decode chose for each
+projection, so the verifying model is the model that filled the cache.
 """
 
 import torch
@@ -20,35 +23,14 @@ class ShortVerifier:
         self.max_draft = max_draft
         self.configs = {}
         original = {name: getattr(engine, name) for name in
-                    ("matmul", "operand", "fused_mlp", "decode_attention", "draft")}
+                    ("matmul", "operand", "fused_mlp", "fused_operand", "partial_config",
+                     "decode_attention", "draft")}
         original_position = engine.pos.clone()
-        # All widths must use the same weights. Switching a projection from
-        # FP8 during ordinary decode to original BF16 during verification can
-        # make the cached keys/values incompatible with the verifying model.
-        # Reconstruct compressed weights once so BF16 GEMMs remain eligible
-        # without silently changing the target when the row count changes.
-        self.verification_weights = {}
-        for name, operands in original["operand"].items():
-            if name == "gate_up" and original["fused_mlp"] is not None:
-                continue
-            if not operands or not isinstance(operands[0], tuple):
-                continue
-            restored = []
-            for packed, scales in operands:
-                rows, inner = packed.shape
-                groups = scales.shape[1]
-                weight = (packed.float().view(rows, groups, inner // groups)
-                          * scales.float()[:, :, None])
-                restored.append(weight.view(rows, inner).to(torch.bfloat16))
-            self.verification_weights[name] = restored
         try:
             for draft in range(1, max_draft + 1):
                 width = draft + 1
                 engine.draft = draft
-                engine._choose_matmuls(
-                    width, overrides=self.verification_weights,
-                    quantized_names=set(self.verification_weights),
-                )
+                engine._choose_matmuls(width, families=engine.families)
                 engine.decode_attention = (DecodeAttention(
                     1, engine.n_kv, engine.n_q // engine.n_kv, engine.head_dim,
                     engine.capacity, engine.device, tokens=width,
@@ -100,8 +82,9 @@ class ShortVerifier:
             return
         # Eager/CPU path lets tests exercise cache rollback and graph-width
         # dispatch against a real small Qwen model without a GPU.
-        names = ("matmul", "operand", "fused_mlp", "decode_attention", "draft",
-                 "spec_ids", "spec_pred", "offsets", "spec_positions", "spec_mask")
+        names = ("matmul", "operand", "fused_mlp", "fused_operand", "partial_config",
+                 "decode_attention", "draft", "spec_ids", "spec_pred", "offsets",
+                 "spec_positions", "spec_mask")
         original = {name: getattr(self.engine, name) for name in names}
         try:
             for name in names:

@@ -58,6 +58,7 @@ image = (
     .add_local_file("bench/replay.py", "/root/replay.py")
     .add_local_file("bench/gpu_checks.py", "/root/gpu_checks.py")
     .add_local_file("bench/fp8_tuning.py", "/root/fp8_tuning.py")
+    .add_local_file("bench/fp8_mma_probe.py", "/root/fp8_mma_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
@@ -195,13 +196,15 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         raise ValueError("baseline engine was not mounted; set DRYFT_BASELINE_DIR locally")
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
-    from gpu_checks import check_rope_fusion, check_attention_dispatch, check_fp8
+    from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
+                            check_fp8_mma)
 
     _describe_gpu(require_h100=True)
     check_rope_fusion()
     check_attention_dispatch()
     if candidate_fp8 == "on":
         check_fp8()
+        check_fp8_mma()
     results = {"baseline": [], "candidate": []}
     shapes = list(PUBLIC_SHAPES)
     if long_context:
@@ -1565,3 +1568,62 @@ def qkv_probe(batch: int = 1):
           f"norm+gemm alone {gemm_only * 1e3:6.2f}us", flush=True)
     print(f"  phase-0 redundant norm costs {(fused - fused_pre) * 1e3:.2f}us",
           flush=True)
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def fp8_mma(batches: str = "1,4,16"):
+    """The CUDA tensor-core FP8 GEMM against cuBLAS, in a fresh process."""
+    import json
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/fp8_mma_probe.py", batches],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    rows = []
+    for line in result.stdout.splitlines():
+        if line.startswith("RESULT_JSON="):
+            rows = json.loads(line.removeprefix("RESULT_JSON="))
+        else:
+            print(line, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+    return rows
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def variants(shape: str = "public-2", samples: int = 5,
+             configs: str = "full;lm_head=off;attn=off;lm_head=off,attn=off;fp8=off"):
+    """The same prompts through several engine configurations, fresh processes."""
+    import os
+    import sys
+
+    sys.path.insert(0, "/root")
+    from harness import PUBLIC_SHAPES, run_isolated
+
+    _describe_gpu(require_h100=True)
+    chosen = [s for s in PUBLIC_SHAPES if s[0] == shape]
+    if shape == "coverage-long":
+        chosen = [("coverage-long", 1, 4096, 65)]
+    rows = {}
+    for label in configs.split(";"):
+        env = {"DRYFT_FP8": "on", "DRYFT_FP8_LM_HEAD": "on", "DRYFT_ATTENTION_TUNE": "on",
+               "DRYFT_SHORT_DRAFT": "0"}
+        for item in label.split(","):
+            if item == "lm_head=off":
+                env["DRYFT_FP8_LM_HEAD"] = "off"
+            elif item == "attn=off":
+                env["DRYFT_ATTENTION_TUNE"] = "off"
+            elif item == "fp8=off":
+                env["DRYFT_FP8"] = "off"
+            elif item.startswith("only="):
+                env["DRYFT_FP8_PROJECTIONS"] = item.removeprefix("only=").replace("+", ",")
+        os.environ.update(env)
+        print(f"\nVARIANT {label}: {env}", flush=True)
+        rows[label] = run_isolated(WEIGHTS, shapes=chosen, samples=samples,
+                                   corpus="/root/corpus.txt")[0]
+    print("\nvariant                    tok/s   worst gap  per-sample gaps")
+    for label, row in rows.items():
+        gaps = " ".join(f"{s['tie_gap']:.3f}" for s in row["sample_metrics"])
+        print(f"{label:24s} {row['tps']:8.1f}  {row['tie_gap']:8.4f}  {gaps}", flush=True)
+    return rows

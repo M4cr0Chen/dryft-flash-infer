@@ -312,34 +312,42 @@ def test_short_verification_rebuilds_after_shape_changes(model_path, monkeypatch
         assert (engine.short_verifier is not None) == (batch == 1)
 
 
-def test_verification_tuner_preserves_quantized_weights(model_path, monkeypatch):
-    """A faster BF16 runner must retain the verifying model's rounded weights."""
+def test_verification_tuner_keeps_each_projection_in_its_family(model_path, monkeypatch):
+    """Verification widths must race only the weight family ordinary decode chose."""
     import engine as engine_module
 
     engine = Engine(model_path)
-    restored = [layer.gate_up.round() for layer in engine.layers]
-    packed = [(weight, torch.ones(weight.shape[0], 1)) for weight in restored]
+    packed = [object() for _ in engine.layers]
     engine.quantised = {"gate_up": packed, "qkv": [object()] * engine.n_layers}
+    engine.families = {"qkv": "bf16", "o": "bf16", "gate_up": "fp8",
+                       "down": "bf16", "lm_head": "bf16"}
     monkeypatch.setattr(engine_module, "HAVE_TRITON", True)
     monkeypatch.setattr(engine_module, "USE_FP8", True)
     monkeypatch.setattr(engine_module, "TUNE_MATMUL", True)
     calls = []
 
-    def choose(rows, weights, *, packed, **kwargs):
-        calls.append((rows, weights, packed))
+    def choose(rows, weights, *, packed, family, **kwargs):
+        calls.append((rows, family, packed))
+        if family == "fp8":
+            return (lambda x, w: x), "fp8", "fp8 verification test"
         return torch.nn.functional.linear, False, "BF16 verification test"
 
-    def wrong_fusion(rows):
-        pytest.fail("original-weight fusion would change the verifying model")
-
+    fusion = []
     monkeypatch.setattr(engine_module, "pick_matmul", choose)
-    monkeypatch.setattr(engine, "_choose_mlp", wrong_fusion)
-    engine._choose_matmuls(3, overrides={"gate_up": restored},
-                           quantized_names={"gate_up"})
-    assert engine.operand["gate_up"] is restored
-    assert calls[2][1] is restored and calls[2][2] is packed
-    assert calls[0][2] is None, "BF16 attention must stay BF16 across graph widths"
-    assert engine.fused_mlp is None
+    monkeypatch.setattr(engine, "_choose_mlp", lambda rows, family="bf16": fusion.append(family))
+    engine._choose_matmuls(3, families=engine.families)
+    assert [c[1] for c in calls] == ["bf16", "bf16", "fp8", "bf16", "bf16"]
+    assert calls[2][2] is packed and engine.operand["gate_up"] is packed
+    assert calls[0][2] is None, "a BF16 projection never sees FP8 operands"
+    assert fusion == ["fp8"], "the fused MLP must stay in gate/up's family"
+    assert engine.families["gate_up"] == "fp8", "verification must not rewrite the families"
+
+    def refuse(rows, weights, *, packed, family, **kwargs):
+        raise RuntimeError("no FP8 kernel passed")
+
+    monkeypatch.setattr(engine_module, "pick_matmul", refuse)
+    with pytest.raises(RuntimeError):
+        engine._choose_matmuls(3, families=engine.families)
 
 
 def test_zero_output_does_no_work():
@@ -366,6 +374,7 @@ def test_mlp_fusion_must_beat_selected_projection(monkeypatch):
 
     engine = Engine.__new__(Engine)
     engine.hidden, engine.device = 4, "cpu"
+    engine.fused_mlp = engine.fused_operand = None
     weight = torch.ones(8, 4, dtype=torch.bfloat16)
     engine.layers = [SimpleNamespace(gate_up=weight)]
     # A transposed operand makes accidentally timing F.linear observable.

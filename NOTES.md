@@ -2,6 +2,134 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## 8-bit weights on the tensor cores, every batch, September 19 (evening)
+
+The earlier FP8 kernels moved half of cuBLAS's bytes and took longer: 0.84 to
+1.63 TB/s against cuBLAS's 2.0 to 2.5. Their dequantisation chain and 128-wide
+K tiles left the memory system idle. `kernels/cuda_fp8.py` is the replacement,
+CUDA C++ through the existing NVRTC route:
+
+- one warp owns sixteen output rows; each lane streams two rows with 16-byte
+  loads and keeps a whole 128-wide group in flight while consuming the last;
+- bytes convert to bfloat16 pairs and go straight into `mma.sync.m16n8k16`
+  as A fragments -- the weight columns are permuted once at load so that a
+  lane's contiguous 16 bytes *are* its fragments, and the activation is
+  permuted the same way into shared memory;
+- the block scale is applied to the fp32 partial once per 64 values, so the
+  dequantisation is exact and costs four FMAs per block;
+- three epilogues: bf16, fp32 split-K planes, and SwiGLU (gate row `i` and up
+  row `i + I` land in the same lane, so the pair needs no exchange).
+
+Every projection including the LM head is 8-bit in decode. The warmup race
+still decides per shape, with cuBLAS as the incumbent to beat by 3%.
+
+### E4M3 failed the margin; INT8 replaced it
+
+The first version stored E4M3 with 128-wide fp32 scales and measured +23.7%
+on the public geomean. Then one public-2 sample put the emitted token
+**4.25 logits** below native's argmax. The same prompt passed at 1.125 under
+two other kernel configurations and failed at 3.625 under a third: E4M3's
+three mantissa bits give every weight about 3% error, enough that a near-tie
+early in a sequence flips, and the diverged prefix eventually meets a
+position where the rounded model disagrees with native outright.
+
+INT8 with one fp16 scale per 64 values has about 3.5x less RMS error at the
+same byte count (+3.1% for scales). Bytes are stored offset by 128; the kernel
+recovers the integer with a byte permute into the mantissa of 2^23 and one
+subtraction, which is exact, and the integer is exact in bfloat16. The scale
+per block is chosen from a short grid for least squared error instead of
+taken from the block maximum. The kernel is about 5% slower than the E4M3
+version at batch 1 (one more instruction per pair) and still 1.4 to 2.1x
+cuBLAS on every shape at batches 1 to 16.
+
+Same five public-2 prompts, worst gap per sample:
+
+| weights | sample gaps | worst |
+| --- | --- | ---: |
+| bfloat16 | 0.250 0.125 0.375 0.125 0.250 | 0.375 |
+| E4M3, all projections | 1.000 0.500 **4.250** 0.500 1.125 | 4.250 |
+| INT8, all projections | 0.625 0.125 0.250 0.250 1.375 | 1.375 |
+| INT8, qkv and o only | 0.250 0.125 0.500 0.250 0.188 | 0.500 |
+| INT8, gate_up and down only | 0.500 0.625 0.250 0.250 1.375 | 1.375 |
+
+The remaining 1.375 comes from the MLP weights, on one sample. It passes,
+but it is 69% of the margin on ten thousand judged positions. Knobs, in the
+order to pull them if an official run reports gaps above 1.5:
+`DRYFT_FP8_PROJECTIONS=qkv,o,lm_head` keeps the MLP in bfloat16 and gives
+back roughly half the gain; `DRYFT_FP8=off` is the previous engine.
+
+| projection, batch | cuBLAS BF16 | Triton E4M3 (old) | CUDA INT8 (new) |
+| --- | ---: | ---: | ---: |
+| qkv b1 / b4 / b16 | 15.8 / 16.5 / 15.7 us | 13.5 / 20.5 / 19.0 | **11.5 / 11.9 / 13.5** |
+| o b1 / b4 / b16 | 14.2 / 14.3 / 14.3 | 12.0 / 17.0 / 15.9 | **10.0 / 10.2 / 11.3** |
+| gate_up b1 / b4 / b16 | 40.7 / 41.2 / 41.3 | 31.6 / 48.9 / 48.4 | **24.8 / 25.3 / 32.3** |
+| down b1 / b4 / b16 | 25.7 / 26.6 / 27.2 | 22.5 / 30.8 / 29.6 | **16.6 / 16.9 / 21.3** |
+| lm_head b1 / b4 / b16 | 333 / 283 / 299 | 218 / 338 / 328 | **158 / 163 / 193** |
+
+At batch 32 the kernel loses to cuBLAS on every shape (0.64 to 0.86x): B
+fragments for four n-tiles exceed what one warp can keep resident. The race
+keeps cuBLAS there. A hidden workload at batch 32 or above gets no 8-bit gain
+from this kernel; a two-warp-per-row-block variant is the next step if the
+hidden shapes turn out that wide.
+
+### Fewer launches around it
+
+- **Split-K planes flow into their consumer.** `o` and `down` write fp32
+  planes; the fused add-norm (`add_rms_norm_partials`) sums them. `qkv`
+  writes planes; the fused norm/RoPE/cache kernel (`qkv_planes_norm_rope_to_cache`)
+  sums them. Sums are sequential in the reduce kernel's order and round to
+  bf16 once, so the result is bit-identical to running the reduce kernel; the
+  GPU checks assert that on 712 cases. Saves 108 launches a step.
+- **Single-split attention writes its output directly**, no merge kernel.
+- **Attention layout race on by default.** Attention is a sixth of a batch-16
+  step now that the projections are 8-bit; the race chose `(1, 64, 4)` there
+  for 1.09x on attention alone.
+
+### Weight families, not weight reconstruction
+
+Speculative verification widths race only the family (8-bit or BF16) that
+ordinary decode chose per projection. The old approach reconstructed FP8
+weights to bf16 for the verification GEMMs; it is gone, along with its 2 GiB.
+`_choose_matmuls(rows, families=...)` raises rather than silently switching
+families, and `_ensure` then runs without short verification.
+
+### What did not work
+
+**FP8 prefill through `torch._scaled_mm`.** Per-token activation scales and
+per-channel weight scales, MLP only or all four projections. Slower on every
+shape (prefill 9.6 -> 19.5 ms at 1 x 512, 105 -> 219 ms at 16 x 512: the
+quantisation pass over the activation costs more than the GEMM saves at
+these sizes in torch 2.5.1) and outside the margin: worst tie gap 4.25 at
+16 x 512. Removed.
+
+**A division-free staging loop** for the activation (one row per iteration)
+was 10% slower than eight scattered 16-byte loads in flight per thread.
+Reverted. An unstaged variant reading B fragments straight from L1 never
+won a race and is gone too.
+
+### Measured, paired on one H100, five corpus samples per shape, against `8914520`
+
+| shape | before | after | change | worst tie gap |
+| --- | ---: | ---: | ---: | ---: |
+| public-0 (1 x 512 -> 32) | 234.9 | 312.2 | **+32.9%** | 0.125 |
+| public-1 (4 x 2048 -> 32) | 493.7 | 573.6 | **+16.2%** | 0.125 |
+| public-2 (16 x 512 -> 128) | 2995.6 | 3385.4 | **+13.0%** | 1.375 |
+| coverage-long (1 x 4096 -> 65) | 196.4 | 263.6 | **+34.2%** | 0.125 |
+
+Public geometric mean 703 -> 846 tok/s, **+20.4%**. Every sample passes every
+local gate; peak memory 27%; load plus warmup 69 to 97 s (the race now covers
+more kernels, and the 300 s budget has room). Ten samples of public-2 hold
+the worst gap at 1.375, on that one prompt. The coverage shapes (3 x 257,
+8 x 1024, 32 x 256) pass with worst gaps of 0.19 to 0.25.
+
+`paired-int8-final-20260919.json` and `coverage-int8-20260919.json` are the
+sources. The E4M3 numbers are kept in `paired-cuda-fp8-20260919.json` and
+`paired-cuda-fp8-final-20260919.json` (the failing run) for the record.
+
+The two thirds of the step that is still not projections at batch 16 --
+attention at 0.57 ms, the two add-norms at 0.27 ms, the launch gap at
+0.12 ms -- is the next pool. The batch-32 GEMM is the other.
+
 ## Organizer clarification and FP8/short speculation, September 19
 
 The user explicitly confirmed that the organizer allows quantization and that

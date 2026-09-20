@@ -130,3 +130,19 @@ To check longer contexts and batch sizes outside the three public examples:
 
 These development cases cover batch/prompt/output shapes 1/4096/65,
 3/257/33, 8/1024/64, and 32/256/16. They do not represent the hidden workloads.
+
+## FP8 tensor-core GEMM
+
+```sh
+.venv/bin/modal run bench/modal_bench.py::fp8_mma --batches 1,4,16,32
+```
+
+Fresh process. For each projection shape and batch: cuBLAS BF16, the old
+Triton FP8 kernel, and `kernels/cuda_fp8.py` at its best config, with the FP8
+bytes-per-second and the relative error against the dequantised weight. Also
+times the fused add-norm over split-K planes by warp and plane count. Every
+config is checked before it is timed; the SwiGLU epilogue is checked against
+the reference rounding. `check_fp8_mma` in `gpu_checks.py` runs the same
+kernel across batches 1 to 32 and asserts the plane consumers
+(`add_rms_norm_partials`, `qkv_planes_norm_rope_to_cache`) are bit-identical
+to the separate reduce; the paired comparison runs it before timing.

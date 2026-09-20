@@ -49,6 +49,35 @@ def _add_rms_norm_kernel(X, D, W, R, Y, N: tl.constexpr, eps, BLOCK: tl.constexp
     tl.store(Y + off, y.to(tl.bfloat16), mask=mask)
 
 
+@triton.jit
+def _add_rms_norm_partials_kernel(
+    X, P, W, R, Y, ROWS, N: tl.constexpr, SPLITS: tl.constexpr, eps, BLOCK: tl.constexpr
+):
+    """The split-K planes summed here instead of by a separate reduce kernel.
+
+    The sum rounds to bfloat16 once, where the projection's output would have,
+    and the residual add then rounds as in the reference.
+    """
+    row = tl.program_id(0).to(tl.int64)
+    cols = tl.arange(0, BLOCK)
+    mask = cols < N
+    off = row * N + cols
+
+    acc = tl.zeros((BLOCK,), tl.float32)
+    for part in range(SPLITS):
+        acc += tl.load(P + (part * ROWS + row) * N + cols, mask=mask, other=0.0)
+    d = acc.to(tl.bfloat16).to(tl.float32)
+    x = tl.load(X + off, mask=mask, other=0.0).to(tl.float32)
+    r = (x + d).to(tl.bfloat16)
+    tl.store(R + off, r, mask=mask)
+
+    rf = r.to(tl.float32)
+    scale = tl.math.rsqrt(tl.sum(rf * rf, axis=0) / N + eps)
+    w = tl.load(W + cols, mask=mask, other=0.0).to(tl.float32)
+    y = (rf * scale).to(tl.bfloat16).to(tl.float32) * w
+    tl.store(Y + off, y.to(tl.bfloat16), mask=mask)
+
+
 def _launch_shape(n_cols: int) -> tuple[int, int]:
     block = triton.next_power_of_2(n_cols)
     return block, max(4, min(16, block // 256))
@@ -77,5 +106,21 @@ def add_rms_norm(
     block, warps = _launch_shape(n)
     _add_rms_norm_kernel[(rows,)](
         x, delta, weight, residual, out, n, eps, BLOCK=block, num_warps=warps
+    )
+    return residual, out
+
+
+def add_rms_norm_partials(
+    x: torch.Tensor, partials: torch.Tensor, weight: torch.Tensor, eps: float
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``add_rms_norm`` where ``delta`` arrives as fp32 planes ``[splits, rows, n]``."""
+    rows, n = x.shape
+    splits = partials.shape[0]
+    residual = torch.empty_like(x)
+    out = torch.empty_like(x)
+    block, warps = _launch_shape(n)
+    _add_rms_norm_partials_kernel[(rows,)](
+        x, partials, weight, residual, out, rows, n, splits, eps,
+        BLOCK=block, num_warps=warps,
     )
     return residual, out

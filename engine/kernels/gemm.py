@@ -132,8 +132,14 @@ def _mm(x, weight):
 
 
 def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
-                use_graph=True):
+                use_graph=True, family=None):
     """Choose how to run this projection shape during decode.
+
+    ``packed`` is the FP8 operand for every layer (``cuda_fp8.Prepared``), or
+    None. ``family`` restricts the race: "bf16" keeps to original-weight
+    kernels, "fp8" to the FP8 kernel, None races both. A verification graph
+    must use the same weight values as ordinary decode for every projection,
+    which is what the restriction is for.
 
     ``every`` is the weight from every layer. The measurement cycles through
     all of them because timing one in a loop measures the wrong thing: the qkv
@@ -166,38 +172,42 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
 
     incumbent = clock(F.linear, every)
     best = (F.linear, False, incumbent)
+    if family == "fp8":
+        if packed is None:
+            raise ValueError("an FP8-only race needs FP8 operands")
+        best = (None, None, float("inf"))
 
-    transposed = [w.t().contiguous() for w in every]
-    if agrees(_mm(x, transposed[0])):
-        elapsed = clock(_mm, transposed)
-        if elapsed < best[2]:
-            best = (_mm, True, elapsed)
-    del transposed
-    torch.cuda.empty_cache()
-
-    if packed is not None:
-        from .fp8 import fp8_matmul
-
-        from .fp8 import CONFIGS as FP8_CONFIGS
-
-        for cfg in FP8_CONFIGS:
-            runner = functools.partial(fp8_matmul, config=cfg)
-            try:
-                # This projection check catches gross implementation errors.
-                # FP8's coarser rounding needs separate end-to-end replay;
-                # passing this local bound does not establish token validity.
-                if not agrees(runner(x, packed[0]), tolerance=0.08):
-                    continue
-            except Exception:
-                continue
-            elapsed = clock(runner, packed)
+    if family != "fp8":
+        transposed = [w.t().contiguous() for w in every]
+        if agrees(_mm(x, transposed[0])):
+            elapsed = clock(_mm, transposed)
             if elapsed < best[2]:
-                best = (runner, "fp8", elapsed)
+                best = (_mm, True, elapsed)
+        del transposed
+        torch.cuda.empty_cache()
+
+    if packed is not None and family != "bf16":
+        from . import cuda_fp8
+
+        if cuda_fp8.ready():
+            for cfg in cuda_fp8.CONFIGS:
+                runner = functools.partial(cuda_fp8.matmul, config=cfg)
+                try:
+                    # This projection check catches gross implementation errors.
+                    # FP8's coarser rounding needs separate end-to-end replay;
+                    # passing this local bound does not establish token validity.
+                    if not agrees(runner(x, packed[0]), tolerance=0.08):
+                        continue
+                except Exception:
+                    continue
+                elapsed = clock(runner, packed)
+                if elapsed < best[2]:
+                    best = (runner, "fp8", elapsed)
 
     try:
         from . import cuda_gemv
 
-        if cuda_gemv.ready():
+        if family != "fp8" and cuda_gemv.ready():
             for cfg in cuda_gemv.CONFIGS:
                 runner = functools.partial(cuda_gemv.cuda_matmul, config=cfg)
                 try:
@@ -211,7 +221,7 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
     except Exception:
         pass
 
-    for config in _CONFIGS:
+    for config in ([] if family == "fp8" else _CONFIGS):
         candidate = functools.partial(skinny_matmul, config=config)
         try:
             if not agrees(candidate(x, weight)):
@@ -224,14 +234,14 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
 
     #: Only move off cuBLAS for a margin the measurement can actually resolve.
     fn, transpose, elapsed = best
-    if fn is not F.linear and elapsed > incumbent * 0.97:
+    if fn is None:
+        raise RuntimeError("no FP8 kernel passed for this shape")
+    if family != "fp8" and fn is not F.linear and elapsed > incumbent * 0.97:
         fn, transpose, elapsed = F.linear, False, incumbent
     if transpose == "cuda":
         return fn, "cuda", f"cuda {moved / (elapsed * 1e-3) / 1e12:.2f} TB/s"
     if transpose == "fp8":
-        from .fp8 import bytes_moved
-
-        real = bytes_moved(packed[0])
+        real = packed[0].bytes_moved()
         return fn, "fp8", (
             f"fp8 {real / (elapsed * 1e-3) / 1e12:.2f} TB/s"
             f" ({moved / (elapsed * 1e-3) / 1e12:.2f} effective)"

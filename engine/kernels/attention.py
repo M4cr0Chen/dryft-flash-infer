@@ -175,7 +175,7 @@ class DecodeAttention:
         self.n_q = n_kv * group
         self.scale = head_dim**-0.5
         self.splits, self.split_len = plan_splits(capacity, batch, n_kv)
-        self.block_n, self.warps, self.direct = _BLOCK_N, 4, False
+        self.block_n, self.warps, self.direct = _BLOCK_N, 4, self.splits == 1
         if config is not None:
             self.splits, self.block_n, self.warps = config
             if self.splits not in (1, 2, 4, 8, 16, 32):

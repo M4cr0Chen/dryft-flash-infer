@@ -15,13 +15,16 @@ except Exception:  # pragma: no cover - the container always has Triton
     DecodeAttention = None
     pick_matmul = None
     fp8 = None
+    cuda_fp8 = None
     cuda_gemv = None
     cuda_mlp = None
     from .reference import (
         add_rms_norm,
+        add_rms_norm_partials,
         kv_norm_rope_to_cache,
         q_norm_rope,
         qkv_norm_rope_to_cache,
+        qkv_planes_norm_rope_to_cache,
         rms_norm,
         swiglu,
     )
@@ -30,10 +33,15 @@ except Exception:  # pragma: no cover - the container always has Triton
 else:
     HAVE_TRITON = True
     from .attention import DecodeAttention
-    from . import cuda_gemv, cuda_mlp, fp8
+    from . import cuda_fp8, cuda_gemv, cuda_mlp, fp8
     from .gemm import pick_matmul
-    from .norm import add_rms_norm, rms_norm
-    from .rope import kv_norm_rope_to_cache, q_norm_rope, qkv_norm_rope_to_cache
+    from .norm import add_rms_norm, add_rms_norm_partials, rms_norm
+    from .rope import (
+        kv_norm_rope_to_cache,
+        q_norm_rope,
+        qkv_norm_rope_to_cache,
+        qkv_planes_norm_rope_to_cache,
+    )
     from .swiglu import swiglu
 
 __all__ = [
@@ -42,12 +50,15 @@ __all__ = [
     "DecodeAttention",
     "pick_matmul",
     "fp8",
+    "cuda_fp8",
     "cuda_gemv",
     "cuda_mlp",
     "add_rms_norm",
+    "add_rms_norm_partials",
     "kv_norm_rope_to_cache",
     "q_norm_rope",
     "qkv_norm_rope_to_cache",
+    "qkv_planes_norm_rope_to_cache",
     "rms_norm",
     "swiglu",
 ]

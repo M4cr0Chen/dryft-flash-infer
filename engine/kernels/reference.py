@@ -23,6 +23,11 @@ def add_rms_norm(
     return residual, rms_norm(residual, weight, eps)
 
 
+def add_rms_norm_partials(x, partials, weight, eps):
+    delta = partials.sum(dim=0).to(x.dtype)
+    return add_rms_norm(x, delta, weight, eps)
+
+
 def _norm_rope(x, weight, cos, sin, positions, seq_len, eps):
     """``x`` is ``[rows, heads, dim]``; row r holds token ``r % seq_len``."""
     rows, _, dim = x.shape
@@ -84,3 +89,14 @@ def qkv_norm_rope_to_cache(
         seq_len, k_cache, v_cache, eps,
     )
     return q
+
+
+def qkv_planes_norm_rope_to_cache(
+    planes, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
+    k_cache, v_cache, eps,
+):
+    qkv = planes.sum(dim=0).to(torch.bfloat16)
+    return qkv_norm_rope_to_cache(
+        qkv, n_q, n_kv, q_weight, k_weight, cos, sin, positions, seq_len,
+        k_cache, v_cache, eps,
+    )

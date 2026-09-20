@@ -23,14 +23,17 @@ import torch.nn.functional as F
 from kernels import (
     HAVE_TRITON,
     NgramDrafter,
+    cuda_fp8,
     cuda_mlp,
     fp8,
     DecodeAttention,
     pick_matmul,
     add_rms_norm,
+    add_rms_norm_partials,
     kv_norm_rope_to_cache,
     q_norm_rope,
     qkv_norm_rope_to_cache,
+    qkv_planes_norm_rope_to_cache,
     rms_norm,
     swiglu,
 )
@@ -45,12 +48,22 @@ PREFILL_ROW_BUDGET = 32768
 #: call in fixed overhead regardless of how little cache it reads, which is 36
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
 TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
-#: Opt-in until whole-generation measurements resolve the small dispatch gain.
-TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "off") == "on"
+#: Race a few attention layouts at warmup. Attention is a sixth of a
+#: batch-16 step now that the projections are FP8, so the race is worth its
+#: seconds of warmup. Selection depends on shape and measured time only.
+TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "on") == "on"
 
 #: Organizer clarification relayed by the user permits quantization. The
 #: teacher-forced quality margin still applies to every emitted position.
 USE_FP8 = os.environ.get("DRYFT_FP8", "on") == "on"
+#: The LM head's rounding lands directly on the judged logits, where the
+#: layers' rounding is damped by 36 residual adds. Off keeps it bfloat16 and
+#: gives back about 5% of a step if the measured tie gaps run close to 2.0.
+FP8_LM_HEAD = os.environ.get("DRYFT_FP8_LM_HEAD", "on") == "on"
+#: Which projections may be 8-bit at all. The rest stay bfloat16 whatever the
+#: race says. Comma separated from qkv, o, gate_up, down, lm_head.
+FP8_PROJECTIONS = set(filter(None, os.environ.get(
+    "DRYFT_FP8_PROJECTIONS", "qkv,o,gate_up,down,lm_head").split(",")))
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
@@ -171,7 +184,10 @@ class Engine:
         self.graph = None
         self.short_verifier = None
         self.quantised = None
-
+        self.families = {}
+        self.fused_mlp = None
+        self.fused_operand = None
+        self.partial_config = {}
     def _self_check(self) -> None:
         """Sanity-check the custom path against native Qwen before timing.
 
@@ -333,38 +349,65 @@ class Engine:
                 and (not self.cuda or self.graph is not None)):
             from kernels.speculation import ShortVerifier
 
-            self.short_verifier = ShortVerifier(self, max_draft=min(2, SHORT_DRAFT))
+            try:
+                self.short_verifier = ShortVerifier(self, max_draft=min(2, SHORT_DRAFT))
+            except Exception:
+                # Ordinary decode is complete without it; a verifier that
+                # cannot reproduce the ordinary weights must not run at all.
+                traceback.print_exc()
+                print("engine: short verification unavailable", file=sys.stderr)
+                self.short_verifier = None
 
-    def _choose_matmuls(self, batch: int, *, overrides=None, quantized_names=None) -> None:
-        """Race cuBLAS against the Triton kernel on every projection shape.
+    def _quantise(self) -> None:
+        """INT8 with 64-wide block scales, laid out for the tensor-core kernel.
+
+        Once per process. The LM head is included: at 778 MiB it is a tenth of
+        every decode step's bytes. The bfloat16 embedding stays for lookups
+        and prefill.
+        """
+        self.quantised = {}
+        if not (USE_FP8 and cuda_fp8 is not None and self.cuda):
+            return
+        if not cuda_fp8.ready():
+            return
+        try:
+            for name, weights in (
+                ("qkv", [ly.qkv for ly in self.layers]),
+                ("o", [ly.o for ly in self.layers]),
+                ("gate_up", [ly.gate_up for ly in self.layers]),
+                ("down", [ly.down for ly in self.layers]),
+                ("lm_head", [self.embed] if FP8_LM_HEAD else []),
+            ):
+                if weights and name in FP8_PROJECTIONS:
+                    self.quantised[name] = [cuda_fp8.prepare(cuda_fp8.quantize(w)) for w in weights]
+            torch.cuda.empty_cache()
+        except Exception:
+            traceback.print_exc()
+            self.quantised = {}
+
+    def _choose_matmuls(self, batch: int, *, families=None) -> None:
+        """Race cuBLAS, the CUDA kernels and FP8 on every projection shape.
 
         Decode only. Prefill currently keeps ``F.linear``; its larger matrices
         need a separate tuning study.
+
+        ``families`` pins each projection to the weight family ordinary decode
+        chose ("fp8" or "bf16"), for the verification widths: a projection that
+        switched weight values between passes would verify against a different
+        model from the one that filled the cache.
         """
         self.matmul = {}
         self.operand = {}
         self.fused_mlp = None
+        self.fused_operand = None
+        self.partial_config = {}
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
-        quantised = self.quantised or {}
-        if USE_FP8 and fp8 is not None and self.quantised is None:
-            try:
-                for name, weights in (
-                    ("qkv", [ly.qkv for ly in self.layers]),
-                    ("o", [ly.o for ly in self.layers]),
-                    ("gate_up", [ly.gate_up for ly in self.layers]),
-                    ("down", [ly.down for ly in self.layers]),
-                ):
-                    quantised[name] = [fp8.quantize(w) for w in weights]
-                if self.cuda:
-                    torch.cuda.empty_cache()
-            except Exception:
-                traceback.print_exc()
-                quantised = {}
-            self.quantised = quantised
-        if not USE_FP8:
-            quantised = {}
+        if self.quantised is None:
+            self._quantise()
+        quantised = self.quantised if USE_FP8 else {}
 
+        chosen_families = {}
         first = self.layers[0]
         for name, sample, every in (
             ("qkv", first.qkv, [ly.qkv for ly in self.layers]),
@@ -373,51 +416,74 @@ class Engine:
             ("down", first.down, [ly.down for ly in self.layers]),
             ("lm_head", self.embed, [self.embed]),
         ):
-            if overrides and name in overrides:
-                every = overrides[name]
-            packed = (quantised.get(name) if quantized_names is None
-                      or name in quantized_names else None)
+            family = families.get(name) if families is not None else None
+            packed = quantised.get(name) if family != "bf16" else None
+            if family == "fp8" and packed is None:
+                raise RuntimeError(f"{name}: ordinary decode used FP8 but no operand exists")
             try:
                 chosen, transpose, note = pick_matmul(
-                    batch, every, packed=packed, use_graph=USE_GRAPH
+                    batch, every, packed=packed, use_graph=USE_GRAPH, family=family
                 )
             except Exception:
+                if families is not None:
+                    raise
                 chosen, transpose, note = F.linear, False, "cublas (selection failed)"
             self.matmul[name] = chosen
             # A transposed layout is a second copy of the weight. Worth it for
             # the projections cuBLAS reads better that way; prefill keeps the
             # original, where the shape is wide enough not to care.
             if transpose == "fp8":
-                self.operand[name] = quantised[name]
+                self.operand[name] = packed
             elif transpose == "cuda":
                 self.operand[name] = every
             elif transpose:
                 self.operand[name] = [w.t().contiguous() for w in every]
             else:
                 self.operand[name] = every
+            chosen_families[name] = "fp8" if transpose == "fp8" else "bf16"
+            # A split-K FP8 projection feeding a residual add can hand its
+            # fp32 planes straight to the fused add-norm instead of reducing
+            # them in a kernel of its own.
+            if transpose == "fp8" and (name in ("o", "down") or (name == "qkv" and FUSE_ROPE)):
+                config = getattr(chosen, "keywords", {}).get("config")
+                if config is not None and cuda_fp8.splits(packed[0], batch, config) > 1:
+                    self.partial_config[name] = config
+                    note += " (planes into the consumer)"
             print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
-        # The fused MLP reads layer.gate_up directly. It cannot substitute
-        # original weights when verification uses reconstructed FP8 weights.
-        if not overrides or "gate_up" not in overrides:
-            self._choose_mlp(batch)
+        if families is None:
+            self.families = chosen_families
+        self._choose_mlp(batch, chosen_families.get("gate_up", "bf16"))
         if self.cuda:
             torch.cuda.empty_cache()
 
-    def _choose_mlp(self, batch: int) -> None:
+    def _choose_mlp(self, batch: int, family: str = "bf16") -> None:
         """Race the fused gate/up+SwiGLU kernel against running them apart.
 
         It folds the SwiGLU into the projection's epilogue, so the 2*I
-        intermediate never reaches memory. Wins at small batches and loses at
-        sixteen, where one accumulator pair per row exhausts the registers.
+        intermediate never reaches memory. The candidate kernel must read the
+        same weight values the chosen projection reads: the FP8 epilogue when
+        gate/up is FP8, the original-weight CUDA kernel otherwise.
         """
         from kernels.timing import time_calls
 
         self.fused_mlp = None
-        if not (cuda_mlp is not None and cuda_mlp.ready()):
-            return
-        weights = [ly.gate_up for ly in self.layers]
+        self.fused_operand = None
+        if family == "fp8":
+            if cuda_fp8 is None or not cuda_fp8.ready():
+                return
+            operands = self.operand["gate_up"]
+            configs = cuda_fp8.SWIGLU_CONFIGS
+            fused = cuda_fp8.gate_up_swiglu
+            tolerance = 0.08
+        else:
+            if not (cuda_mlp is not None and cuda_mlp.ready()):
+                return
+            operands = [ly.gate_up for ly in self.layers]
+            configs = cuda_mlp.CONFIGS
+            fused = cuda_mlp.gate_up_swiglu
+            tolerance = 0.02
         x = torch.randn(batch, self.hidden, dtype=torch.bfloat16, device=self.device)
-        reference = swiglu(F.linear(x, weights[0]))
+        reference = swiglu(F.linear(x, self.layers[0].gate_up))
         scale = reference.float().abs().max().item() or 1.0
 
         def clock(fn, operands):
@@ -426,20 +492,21 @@ class Engine:
         projection = self.matmul["gate_up"]
         split = clock(lambda w: swiglu(projection(x, w)), self.operand["gate_up"])
         best, chosen = split, None
-        for config in cuda_mlp.CONFIGS:
-            runner = (lambda w, c=config: cuda_mlp.gate_up_swiglu(x, w, config=c))
+        for config in configs:
+            runner = (lambda w, c=config: fused(x, w, config=c))
             try:
-                out = runner(weights[0])
+                out = runner(operands[0])
             except Exception:
                 continue
-            if (out.float() - reference.float()).abs().max().item() / scale > 0.02:
+            if (out.float() - reference.float()).abs().max().item() / scale > tolerance:
                 continue
-            elapsed = clock(runner, weights)
+            elapsed = clock(runner, operands)
             if elapsed < best * 0.97:
                 best, chosen = elapsed, config
         if chosen is not None:
-            self.fused_mlp = lambda a, w, c=chosen: cuda_mlp.gate_up_swiglu(a, w, config=c)
-        print(f"engine: mlp      fused={chosen}  {split / best:.2f}x vs split",
+            self.fused_mlp = lambda a, w, c=chosen: fused(a, w, config=c)
+            self.fused_operand = operands
+        print(f"engine: mlp      fused={chosen} ({family})  {split / best:.2f}x vs split",
               file=sys.stderr)
 
     def _capture(self) -> None:
@@ -481,21 +548,38 @@ class Engine:
         materialises a residual only to read it back.
         """
         def project(name, index, source, fallback):
-            if not matmul:
-                return F.linear(source, fallback)
-            return matmul[name](source, self.operand[name][index])
+            if matmul:
+                return matmul[name](source, self.operand[name][index])
+            return F.linear(source, fallback)
+
+        def add_project_norm(name, index, residual, source, fallback, norm_weight):
+            """``residual + project(source)``, then the norm, reducing split-K planes in place."""
+            config = self.partial_config.get(name) if matmul else None
+            if config is not None:
+                planes = cuda_fp8.matmul_partials(source, self.operand[name][index], config)
+                return add_rms_norm_partials(residual, planes, norm_weight, self.eps)
+            return add_rms_norm(residual, project(name, index, source, fallback),
+                                norm_weight, self.eps)
 
         normed = rms_norm(x, self.layers[0].norm_in, self.eps)
         for index, layer in enumerate(self.layers):
-            qkv = project("qkv", index, normed, layer.qkv)
             kc = self.k_cache[index].narrow(0, offset, batch)
             vc = self.v_cache[index].narrow(0, offset, batch)
-            if FUSE_ROPE:
+            qkv_config = self.partial_config.get("qkv") if matmul else None
+            if qkv_config is not None:
+                planes = cuda_fp8.matmul_partials(normed, self.operand["qkv"][index], qkv_config)
+                q = qkv_planes_norm_rope_to_cache(
+                    planes, self.n_q, self.n_kv, layer.q_norm, layer.k_norm,
+                    self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
+                )
+            elif FUSE_ROPE:
+                qkv = project("qkv", index, normed, layer.qkv)
                 q = qkv_norm_rope_to_cache(
                     qkv, self.n_q, self.n_kv, layer.q_norm, layer.k_norm,
                     self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
                 )
             else:
+                qkv = project("qkv", index, normed, layer.qkv)
                 q = q_norm_rope(
                     qkv, self.n_q, layer.q_norm,
                     self.cos, self.sin, positions, seq_len, self.eps,
@@ -505,20 +589,17 @@ class Engine:
                     self.cos, self.sin, positions, seq_len, kc, vc, self.eps,
                 )
             attended = attend(q, index, batch, offset, seq_len)
-            x, normed = add_rms_norm(
-                x, project("o", index, attended, layer.o), layer.norm_post, self.eps
-            )
+            x, normed = add_project_norm("o", index, x, attended, layer.o, layer.norm_post)
             if matmul and self.fused_mlp is not None:
-                inner = self.fused_mlp(normed, layer.gate_up)
+                inner = self.fused_mlp(normed, self.fused_operand[index])
             else:
                 inner = swiglu(project("gate_up", index, normed, layer.gate_up))
-            down = project("down", index, inner, layer.down)
             following = (
                 self.layers[index + 1].norm_in
                 if index + 1 < self.n_layers
                 else self.norm_out
             )
-            x, normed = add_rms_norm(x, down, following, self.eps)
+            x, normed = add_project_norm("down", index, x, inner, layer.down, following)
         return normed
 
     def _attend_prefill(self, q, index, batch, offset, seq_len):
