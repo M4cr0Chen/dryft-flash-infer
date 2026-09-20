@@ -1,9 +1,9 @@
 """Qwen3 4B decode engine.
 
 The model's own forward, rebuilt: fused projections, Triton norm/RoPE/SwiGLU,
-a preallocated KV cache, and one CUDA graph over the whole decode step. The
-arithmetic is the reference's, reordered but never reformulated, so the tokens
-are the ones native Qwen picks.
+a preallocated KV cache, and CUDA graphs over decode and short verification.
+Decode may use FP8-compressed weights where they win the warmup race; emitted
+tokens remain subject to native Qwen's teacher-forced two-logit margin.
 
 Shape-dependent work -- cache allocation, Triton compilation, graph capture --
 happens on the first ``generate`` call, which the platform spends on warmup and
@@ -48,9 +48,9 @@ TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
 #: Opt-in until whole-generation measurements resolve the small dispatch gain.
 TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "off") == "on"
 
-#: The published rules require BF16. Keep the historical quantization
-#: experiment opt-in; its small sampled logit gaps are not a correctness proof.
-USE_FP8 = os.environ.get("DRYFT_FP8", "off") == "on"
+#: Organizer clarification relayed by the user permits quantization. The
+#: teacher-forced quality margin still applies to every emitted position.
+USE_FP8 = os.environ.get("DRYFT_FP8", "on") == "on"
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
@@ -72,12 +72,15 @@ DRAFT = int(os.environ.get("DRYFT_DRAFT", "0"))
 #: this far below what the drafter can reach is the point.
 DRAFT_TARGET = float(os.environ.get("DRYFT_DRAFT_TARGET", "1.25"))
 
+#: Separate 1/2/3-row graphs avoid padded verification on empty proposals.
+SHORT_DRAFT = int(os.environ.get("DRYFT_SHORT_DRAFT", "2"))
+SHORT_TARGET = float(os.environ.get("DRYFT_SHORT_TARGET", "1.15"))
+
 #: Spare cache slots, for the decode steps spent warming the graph.
 CAPACITY_SLACK = 8
 
-#: Largest logit disagreement with native Qwen that still counts as reordering
-#: rather than breakage. The tie margin is 2.0 and native's own teacher-forced
-#: replay drifts up to 0.75, so anything past this is a real fault.
+#: Conservative startup threshold, below the judge's 2.0 tie margin. This
+#: small probe is a sanity check, not a substitute for full workload replay.
 SELF_CHECK_TOLERANCE = 1.0
 
 
@@ -157,9 +160,7 @@ class Engine:
         self.layers = [_Layer(layer) for layer in base.layers]
 
         # The fused projections duplicate q/k/v/gate/up, about 4.7 GiB. The
-        # originals stay: they are the fallback, and this engine is written
-        # against a GPU it cannot be tested on. Drop them here if a hidden
-        # workload ever comes back memory_limit.
+        # originals stay for native fallback and the startup self-check.
         if self.cuda:
             torch.cuda.empty_cache()
 
@@ -168,9 +169,11 @@ class Engine:
         self.k_cache = self.v_cache = None
         self.capacity = self.batch = self.seq_len = 0
         self.graph = None
+        self.short_verifier = None
+        self.quantised = None
 
     def _self_check(self) -> None:
-        """Prove the custom path against native Qwen before anything is timed.
+        """Sanity-check the custom path against native Qwen before timing.
 
         This runs inside the load budget on a small shape, so the first run on
         the platform reports what the engine actually agrees on rather than
@@ -216,11 +219,20 @@ class Engine:
         if not worst < SELF_CHECK_TOLERANCE:
             raise RuntimeError(f"self-check tie gap {worst}")
         if got != expected:
-            raise RuntimeError("self-check tokens disagree with native Qwen")
+            # A near tie may change after quantization or a different GEMM
+            # shape. Check native Qwen on our actual prefix, as the judge does.
+            with torch.inference_mode():
+                tokens = torch.tensor(got, device=self.device).T
+                full = torch.cat([torch.tensor(ids, device=self.device), tokens], dim=1)
+                logits = self._native(input_ids=full, logits_to_keep=steps + 1).logits[:, :steps].float()
+                gaps = logits.max(dim=-1).values - logits.gather(2, tokens[:, :, None])[:, :, 0]
+                if not torch.isfinite(gaps).all() or gaps.max().item() > SELF_CHECK_TOLERANCE:
+                    raise RuntimeError("self-check decode exceeds the native logit margin")
 
         # Release the probe's buffers so the real workload allocates its own.
         self.capacity = 0
         self.graph = None
+        self.short_verifier = None
         self.k_cache = self.v_cache = None
         if self.cuda:
             torch.cuda.empty_cache()
@@ -262,6 +274,7 @@ class Engine:
             return
 
         self.graph = None
+        self.short_verifier = None
         self.k_cache = self.v_cache = None
         if self.cuda:
             torch.cuda.empty_cache()
@@ -316,8 +329,13 @@ class Engine:
             )
 
         self._capture()
+        if (SHORT_DRAFT and batch == 1 and not self.draft
+                and (not self.cuda or self.graph is not None)):
+            from kernels.speculation import ShortVerifier
 
-    def _choose_matmuls(self, batch: int) -> None:
+            self.short_verifier = ShortVerifier(self, max_draft=min(2, SHORT_DRAFT))
+
+    def _choose_matmuls(self, batch: int, *, overrides=None, quantized_names=None) -> None:
         """Race cuBLAS against the Triton kernel on every projection shape.
 
         Decode only. Prefill currently keeps ``F.linear``; its larger matrices
@@ -328,8 +346,8 @@ class Engine:
         self.fused_mlp = None
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
-        quantised = {}
-        if USE_FP8 and fp8 is not None:
+        quantised = self.quantised or {}
+        if USE_FP8 and fp8 is not None and self.quantised is None:
             try:
                 for name, weights in (
                     ("qkv", [ly.qkv for ly in self.layers]),
@@ -343,6 +361,9 @@ class Engine:
             except Exception:
                 traceback.print_exc()
                 quantised = {}
+            self.quantised = quantised
+        if not USE_FP8:
+            quantised = {}
 
         first = self.layers[0]
         for name, sample, every in (
@@ -352,9 +373,13 @@ class Engine:
             ("down", first.down, [ly.down for ly in self.layers]),
             ("lm_head", self.embed, [self.embed]),
         ):
+            if overrides and name in overrides:
+                every = overrides[name]
+            packed = (quantised.get(name) if quantized_names is None
+                      or name in quantized_names else None)
             try:
                 chosen, transpose, note = pick_matmul(
-                    batch, every, packed=quantised.get(name), use_graph=USE_GRAPH
+                    batch, every, packed=packed, use_graph=USE_GRAPH
                 )
             except Exception:
                 chosen, transpose, note = F.linear, False, "cublas (selection failed)"
@@ -371,7 +396,10 @@ class Engine:
             else:
                 self.operand[name] = every
             print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
-        self._choose_mlp(batch)
+        # The fused MLP reads layer.gate_up directly. It cannot substitute
+        # original weights when verification uses reconstructed FP8 weights.
+        if not overrides or "gate_up" not in overrides:
+            self._choose_mlp(batch)
         if self.cuda:
             torch.cuda.empty_cache()
 
@@ -657,6 +685,10 @@ class Engine:
                 if self.draft:
                     yield from self._stream_speculative(
                         input_ids[0], max_new_tokens
+                    )
+                elif self.short_verifier is not None:
+                    yield from self.short_verifier.stream(
+                        input_ids[0], max_new_tokens, target=SHORT_TARGET,
                     )
                 else:
                     yield from self._stream(max_new_tokens)

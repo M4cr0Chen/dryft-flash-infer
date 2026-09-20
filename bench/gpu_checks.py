@@ -84,3 +84,36 @@ def check_attention_dispatch():
                     worst = max(worst, error)
                     cases += 1
     print(f"GPU attention: {cases} causal/boundary cases passed; max SDPA error={worst}", flush=True)
+
+
+def check_fp8():
+    """Check weight/group indexing, partial tiles and split reduction against GEMM."""
+    import sys
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root/engine")
+    from kernels.fp8 import quantize, fp8_matmul
+
+    torch.manual_seed(59)
+    cases, worst = 0, 0.0
+    for group in (64, 128):
+        weight = torch.randn(73, 384, dtype=torch.bfloat16, device="cuda")
+        weight[0].zero_()
+        packed, scales = quantize(weight, group=group)
+        restored = (packed.float().view(73, -1, group) * scales.float()[:, :, None])
+        restored = restored.reshape_as(weight).bfloat16()
+        for batch in (1, 2, 3, 4, 16):
+            x = torch.randn(batch, 384, dtype=torch.bfloat16, device="cuda")
+            expected = F.linear(x, restored)
+            scale = expected.float().abs().max().item()
+            for config in ((32, 4, 4, 1), (16, 4, 4, 4)):
+                actual = fp8_matmul(x, (packed, scales), config=config)
+                relative = (actual.float() - expected.float()).abs().max().item() / scale
+                if not torch.isfinite(actual).all() or relative > 0.02:
+                    raise AssertionError(f"FP8 {batch=} {group=} {config=}: error={relative}")
+                if torch.count_nonzero(actual[:, 0]).item():
+                    raise AssertionError("FP8 zero row was not preserved")
+                worst = max(worst, relative)
+                cases += 1
+    print(f"GPU FP8: {cases} indexing/reduction cases passed; max relative error={worst:.5f}", flush=True)

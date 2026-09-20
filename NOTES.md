@@ -2,6 +2,123 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Organizer clarification and FP8/short speculation, September 19
+
+The user explicitly confirmed that the organizer allows quantization and that
+the published prohibition is stale. This supersedes the earlier opt-in policy
+and the historical note below about an unverified exception. The native
+teacher-forced two-logit margin still applies at every emitted position.
+
+The working engine enables group-128 E4M3 weight compression for decode,
+selected per projection by the warmup race. Activations, prefill, and the tied
+embedding/LM head retain BF16. Packed weights are cached once and shared across
+ordinary and verification graphs. Batched FP8 now has a tensor-core path;
+BF16 remains available whenever it wins the timing race.
+
+Short verification has moved from `bench/short_spec.py` into the submitted
+`engine/kernels/speculation.py`. Batch one keeps separately tuned one-, two-,
+and three-row graphs. Two draft tokens, order-two prompt lookup, and a 1.15
+tokens/pass governor are the default. Empty proposals use ordinary decode.
+Only the accepted prefix advances the live cache position. Each generation
+resets the prompt lookup and overwrites the prompt cache. Verification checks
+the chosen target implementation; it does not undo quantization error.
+
+`DRYFT_FP8=off` and `DRYFT_SHORT_DRAFT=0` independently disable these features.
+Attention tuning remains opt-in.
+
+### What the first combined comparison established
+
+`bench/results/paired-fp8-short-20260919.json` compares against `0949421` on one
+H100, with five samples per public shape. Batch one rose from 249.1 to 255.2
+tok/s (+2.4%); batch four fell from 496.4 to 492.3 (-0.8%); batch sixteen fell
+from 2997.1 to 2987.8 (-0.3%). The geometric-mean change is **+0.4%, not a
+convincing overall gain**. Every public sample passed; this did not establish
+correctness on other prefixes, as the failure below demonstrates.
+
+`bench/results/fp8-kernel-study-20260919.json` compares expanding each weight
+before the dot product against applying group scales after each group dot.
+Both use BF16 tensor-core products. The expanded-weight implementation won
+every tested projection/batch pair, but still lost to cuBLAS at batches
+2, 3, 4, and 16. This rejects these two implementations; it is not an FP8
+hardware ceiling. Activation quantization and native FP8 tensor-core products
+were not implemented or measured in this round.
+
+### Precision consistency across speculative passes
+
+The initial full corpus run failed on prose seed 4100, prompt length 512,
+output length 128. The failure reproduced with both one- and two-token drafts:
+output position 111 selected token 944 instead of native's token 29, a
+**22.8125-logit** gap. `fp8-speculation-diagnostic-20260919.json` retains the
+75-trial diagnostic, including both failures. The short public examples did
+not expose it.
+
+`fp8-speculation-trace-20260919.json` and `fp8-speculation-ablation-20260919.json`
+show that graph and eager execution agreed at the bad step. Ordinary decode
+used compressed QKV/gate-up weights, whereas verification switched to original
+BF16 weights while retaining the cache produced by earlier passes. Disabling
+either compressed projection changed the generated prefix and removed the
+failure. The MLP-only ablation passed all 225 corpus trials, worst gap 0.875.
+Forced-prefix checks also show that original BF16 custom decode can disagree
+strongly on that particular quantized-generated prefix; a passing unquantized
+generation on another prefix is not sufficient evidence.
+
+The fix preserves the ordinary path's weight choices in every verification
+width. Compressed weights are reconstructed into BF16 once, permitting the
+faster BF16 verification GEMMs without switching back to original weights.
+Original-weight fused MLP kernels are excluded when the gate/up weights are
+compressed. This adds weight storage during warmup, not per-token conversion.
+
+`fp8-consistent-speculation-20260919.json` rechecks 75 trials at 512/128:
+**all passed**, worst gap **1.0**. For the default capped two-token policy,
+speedups over ordinary FP8 decode were 1.037x prose, 1.107x code, and 1.122x
+technical text; maximum spread was 11.3%. Uncapped speculation still exceeded
+the 25% spread gate. The final full-corpus and paired measurements follow below.
+
+`quantized-speculation-final-20260919.json` repeats the complete 225-trial
+corpus study with the corrected implementation. All teacher-forced trials pass.
+Worst gap is 1.0 logits; the default policy's maximum sample spread is 12.6%.
+The default policy's speedups over ordinary FP8 decode are:
+
+| Prompt / output | Prose | Code | Technical |
+| --- | ---: | ---: | ---: |
+| 512 / 32 | 1.000x | 1.088x | 1.000x |
+| 2048 / 32 | 0.996x | 1.088x | 1.039x |
+| 512 / 128 | 1.035x | 1.106x | 1.112x |
+
+This supports a conditional gain on repetitive code/technical continuations,
+with approximately flat short prose results. It does not imply the same gain
+on the unknown hidden corpus.
+
+### Final paired comparison
+
+`paired-fp8-consistent-20260919.json` uses the final engine source, verified by
+its SHA-256, and five samples per shape against `0949421` on the same H100:
+
+| Batch / prompt / output | Baseline tok/s | Candidate tok/s | Change |
+| --- | ---: | ---: | ---: |
+| 1 / 512 / 32 | 250.6 | 254.7 | +1.6% |
+| 4 / 2048 / 32 | 501.4 | 500.5 | -0.2% |
+| 16 / 512 / 128 | 3042.9 | 3045.6 | +0.1% |
+| 1 / 4096 / 65 | 199.2 | 208.0 | +4.4% |
+
+The public-shape geometric mean improved approximately **0.5%**, which remains
+too small to call a robust general-throughput gain. Every baseline/candidate
+sample passes the local gates. The long-context candidate's spread is 15.5%
+and peak memory is 35.7% of the device. The extra reconstructed verification
+weights explain the memory increase over the first prototype.
+
+Final checks: 40 CPU tests, 20 FP8 GPU indexing/reduction cases, 54 attention
+cases, six bit-exact RoPE cases, the full corpus replay, and Dryft archive
+validation pass. The initial expanded-shape coverage additionally passed
+batches 3, 8, and 32, where the tuner retained BF16 and speculation was inactive;
+batch 32 reached a native gap of 1.875, demonstrating why the tolerance cannot
+be assumed from the public examples alone.
+
+The latest user-confirmed Dryft score remains **940 tok/s**. No leaderboard
+gain has been established by these local experiments. The next substantial
+unmeasured direction is native FP8 tensor-core matrix multiplication, including
+MLP prefill; further attention tuning has shown little total-time benefit.
+
 ## MLP, attention, and short verification, September 19
 
 Starting point: commit `0949421`; the user reports **940 tok/s** on Dryft.

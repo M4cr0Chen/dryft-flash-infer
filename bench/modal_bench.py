@@ -57,10 +57,11 @@ image = (
     .add_local_file("bench/harness.py", "/root/harness.py")
     .add_local_file("bench/replay.py", "/root/replay.py")
     .add_local_file("bench/gpu_checks.py", "/root/gpu_checks.py")
+    .add_local_file("bench/fp8_tuning.py", "/root/fp8_tuning.py")
+    .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
     .add_local_file("bench/study.py", "/root/study.py")
-    .add_local_file("bench/short_spec.py", "/root/short_spec.py")
     .add_local_file("OPTIMIZATION_GUIDE.md", "/root/technical.txt")
 )
 
@@ -83,8 +84,20 @@ def study_remote(stage: str = "profile"):
 
     _describe_gpu(require_h100=True)
     rows = []
+    if stage in ("fp8", "spec_trace"):
+        script = "/root/fp8_tuning.py" if stage == "fp8" else "/root/spec_trace.py"
+        result = subprocess.run([sys.executable, script],
+                                text=True, stdout=subprocess.PIPE, check=True)
+        for line in result.stdout.splitlines():
+            if line.startswith("RESULT_JSON="):
+                rows = json.loads(line.removeprefix("RESULT_JSON="))
+            else:
+                print(line, flush=True)
+        return rows
     shapes = ([(1, 512, 32), (1, 2048, 32), (1, 512, 128)]
-              if stage == "speculation" else [(1, 512, 32), (4, 2048, 32), (16, 512, 128)])
+              if stage in ("speculation", "speculation_mlp") else [(1, 512, 32), (4, 2048, 32), (16, 512, 128)])
+    if stage == "speculation_debug":
+        shapes = [(1, 512, 128)]
     for batch, context, output in shapes:
         result = subprocess.run(
             [sys.executable, "/root/study.py", stage, str(batch), str(context), str(output)],
@@ -170,7 +183,9 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
-def compare_benchmark(samples: int = 5, corpus: bool = True):
+def compare_benchmark(samples: int = 5, corpus: bool = True,
+                      candidate_fp8: str = "on", short_draft: int = 2,
+                      long_context: bool = False):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -180,17 +195,24 @@ def compare_benchmark(samples: int = 5, corpus: bool = True):
         raise ValueError("baseline engine was not mounted; set DRYFT_BASELINE_DIR locally")
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
-    from gpu_checks import check_rope_fusion, check_attention_dispatch
+    from gpu_checks import check_rope_fusion, check_attention_dispatch, check_fp8
 
     _describe_gpu(require_h100=True)
     check_rope_fusion()
     check_attention_dispatch()
-    os.environ["DRYFT_FP8"] = "off"
+    if candidate_fp8 == "on":
+        check_fp8()
     results = {"baseline": [], "candidate": []}
-    for index, shape in enumerate(PUBLIC_SHAPES):
+    shapes = list(PUBLIC_SHAPES)
+    if long_context:
+        shapes.append(("coverage-long", 1, 4096, 65))
+    for index, shape in enumerate(shapes):
         order = ["baseline", "candidate"] if index % 2 == 0 else ["candidate", "baseline"]
         for label in order:
-            print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / BF16", flush=True)
+            os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else "off"
+            os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft if label == "candidate" else 0)
+            print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
+                  f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
             rows = run_isolated(
                 WEIGHTS, shapes=[shape], samples=samples,
                 corpus="/root/corpus.txt" if corpus else None,
@@ -201,7 +223,9 @@ def compare_benchmark(samples: int = 5, corpus: bool = True):
 
 
 @app.local_entrypoint()
-def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json"):
+def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json",
+            candidate_fp8: str = "on", short_draft: int = 2,
+            long_context: bool = False):
     import hashlib
     import json
     import subprocess
@@ -224,9 +248,14 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "candidate_sha256": fingerprint("engine"),
         "baseline_sha256": fingerprint(BASELINE_DIR),
-        "samples": samples, "corpus": corpus, "fp8": False,
+        "samples": samples, "corpus": corpus,
+        "baseline_fp8": False, "candidate_fp8": candidate_fp8,
+        "candidate_short_draft": short_draft,
+        "long_context": long_context,
     }
-    results = compare_benchmark.remote(samples=samples, corpus=corpus)
+    results = compare_benchmark.remote(samples=samples, corpus=corpus,
+                                       candidate_fp8=candidate_fp8, short_draft=short_draft,
+                                       long_context=long_context)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -331,13 +360,23 @@ def shell():
 
 @app.local_entrypoint()
 def main(samples: int = 5, detune: str = "", draft: int = 0,
-         target: float = 1.25, corpus: bool = False, output: str = ""):
+         target: float = 1.25, corpus: bool = False, output: str = "",
+         shape_set: str = "public"):
     import hashlib
     import json
     import subprocess
     from datetime import datetime, timezone
     from pathlib import Path
 
+    if shape_set not in ("public", "coverage"):
+        raise ValueError("shape_set must be public or coverage")
+    # Development cases, not guesses at the hidden leaderboard workloads.
+    shapes = None if shape_set == "public" else [
+        ("coverage-long", 1, 4096, 65),
+        ("coverage-odd", 3, 257, 33),
+        ("coverage-medium", 8, 1024, 64),
+        ("coverage-wide", 32, 256, 16),
+    ]
     digest = hashlib.sha256()
     for path in sorted(Path("engine").rglob("*.py")):
         digest.update(path.relative_to("engine").as_posix().encode() + b"\0")
@@ -348,8 +387,9 @@ def main(samples: int = 5, detune: str = "", draft: int = 0,
         "engine_sha256": digest.hexdigest(),
         "samples": samples, "corpus": corpus, "detune": detune,
         "draft": draft, "draft_target": target,
+        "shape_set": shape_set,
     }
-    rows = benchmark.remote(samples=samples, detune=detune, draft=draft,
+    rows = benchmark.remote(shapes=shapes, samples=samples, detune=detune, draft=draft,
                             target=target, corpus=corpus)
     if output:
         path = Path(output)

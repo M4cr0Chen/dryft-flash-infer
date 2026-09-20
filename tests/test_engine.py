@@ -263,6 +263,85 @@ def test_governor_holds_the_rate_down():
     assert drafter.rate <= 1.35, f"governor let the rate reach {drafter.rate}"
 
 
+def test_short_verification_accept_reject_and_fallback(model_path, monkeypatch):
+    """Mix accepted drafts, partial/full rejection and ordinary decode on one prefix."""
+    import engine as engine_module
+    from kernels.ngram import NgramDrafter
+
+    monkeypatch.setattr(engine_module, "SHORT_DRAFT", 2)
+    prompts = _prompts(1, 24, seed=71)
+    expected = _native_tokens(model_path, prompts, 16)
+    flat = [row[0] for row in expected]
+    calls = []
+
+    def scripted(drafter):
+        at = len(drafter.context) - len(prompts[0])
+        proposal = flat[at:at + 2]
+        mode = len(calls) % 4
+        calls.append(mode)
+        if mode == 1 and len(proposal) > 1:
+            proposal[1] ^= 1
+        elif mode == 2 and proposal:
+            proposal[0] ^= 1
+        elif mode == 3:
+            proposal = []
+        return proposal
+
+    monkeypatch.setattr(NgramDrafter, "propose", scripted)
+    engine = Engine(model_path)
+    got = list(engine.generate(prompts, len(expected)))
+    assert got == expected
+    stats = engine.short_verifier.stats
+    assert stats["accepted"] > 0
+    assert stats["verify_passes"] > 0
+    assert stats["ordinary_passes"] > 0
+    assert set(calls) == {0, 1, 2, 3}
+    # A new call must overwrite the speculative cache suffix and reset state.
+    calls.clear()
+    assert list(engine.generate(prompts, len(expected))) == expected
+
+
+def test_short_verification_rebuilds_after_shape_changes(model_path, monkeypatch):
+    import engine as engine_module
+
+    monkeypatch.setattr(engine_module, "SHORT_DRAFT", 2)
+    engine = Engine(model_path)
+    for batch, length, steps in ((1, 18, 7), (3, 13, 4), (1, 27, 9), (1, 27, 1)):
+        prompts = _prompts(batch, length, seed=length)
+        assert list(engine.generate(prompts, steps)) == _native_tokens(model_path, prompts, steps)
+        assert (engine.short_verifier is not None) == (batch == 1)
+
+
+def test_verification_tuner_preserves_quantized_weights(model_path, monkeypatch):
+    """A faster BF16 runner must retain the verifying model's rounded weights."""
+    import engine as engine_module
+
+    engine = Engine(model_path)
+    restored = [layer.gate_up.round() for layer in engine.layers]
+    packed = [(weight, torch.ones(weight.shape[0], 1)) for weight in restored]
+    engine.quantised = {"gate_up": packed, "qkv": [object()] * engine.n_layers}
+    monkeypatch.setattr(engine_module, "HAVE_TRITON", True)
+    monkeypatch.setattr(engine_module, "USE_FP8", True)
+    monkeypatch.setattr(engine_module, "TUNE_MATMUL", True)
+    calls = []
+
+    def choose(rows, weights, *, packed, **kwargs):
+        calls.append((rows, weights, packed))
+        return torch.nn.functional.linear, False, "BF16 verification test"
+
+    def wrong_fusion(rows):
+        pytest.fail("original-weight fusion would change the verifying model")
+
+    monkeypatch.setattr(engine_module, "pick_matmul", choose)
+    monkeypatch.setattr(engine, "_choose_mlp", wrong_fusion)
+    engine._choose_matmuls(3, overrides={"gate_up": restored},
+                           quantized_names={"gate_up"})
+    assert engine.operand["gate_up"] is restored
+    assert calls[2][1] is restored and calls[2][2] is packed
+    assert calls[0][2] is None, "BF16 attention must stay BF16 across graph widths"
+    assert engine.fused_mlp is None
+
+
 def test_zero_output_does_no_work():
     engine = Engine.__new__(Engine)
     assert list(engine.generate([[1, 2]], 0)) == []

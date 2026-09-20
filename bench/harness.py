@@ -208,6 +208,12 @@ def run(model_path, shapes=None, samples=5, verbose=True, engine_path="/root/eng
             "load_warmup_seconds": load_seconds + mine["warmup_seconds"],
             "gpu": torch.cuda.get_device_name(0),
             "torch": torch.__version__, "cuda": torch.version.cuda,
+            "fast_path": engine._fast,
+            "decode_projections": {
+                name: getattr(getattr(fn, "func", fn), "__name__", type(fn).__name__)
+                for name, fn in getattr(engine, "matmul", {}).items()
+            },
+            "short_verification": getattr(engine, "short_verifier", None) is not None,
         }
         row["passes"] = (
             gap <= TIE_MARGIN

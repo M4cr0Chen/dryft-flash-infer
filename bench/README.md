@@ -19,8 +19,13 @@ DRYFT_BASELINE_DIR=/path/to/old/engine .venv/bin/modal run \
   --output bench/results/paired.json
 ```
 
-Both engines use BF16, run on the same physical H100, and get identical corpus
-prompts. Old/new order alternates between workloads. Each engine/workload runs
+Add `--long-context` to include a 4096-token prompt / 65-token output case.
+
+The baseline uses BF16 with speculation disabled. The candidate defaults to
+FP8 weight compression and capped two-token speculation at batch one. Pass
+`--candidate-fp8 off --short-draft 0` for a BF16-only comparison. Both engines
+run on the same physical H100 and get identical corpus prompts. Old/new order
+alternates between workloads. Each engine/workload runs
 in a fresh subprocess. The JSON records source hashes, GPU/runtime, each sample's
 time and correctness gap, and medians. For differences near the observed noise,
 repeat the paired experiment rather than infer a ceiling from one result.
@@ -30,8 +35,10 @@ the candidate. The official judge uses separate trusted processes and a token
 pipe. Local latency/memory checks are diagnostics, not official eligibility.
 Every measured sample is replayed through native Qwen on its own emitted prefix.
 
-The comparison also checks the actual fused Q/K/V Triton kernel against the
+The comparison checks the actual fused Q/K/V Triton kernel against the
 separate kernels, including untouched cache slots and nonzero batch offsets.
+It also checks attention boundaries and, when enabled, FP8 projections against
+independently dequantized weights across multiple group sizes and row counts.
 After timing, a fixed-position graph is replayed 65 times to check that its
 position and emitted token remain stable.
 
@@ -86,7 +93,8 @@ ordinary and a tuned graph, and alternates them per prompt. The default engine
 keeps the original dispatch because measured total improvements were small;
 set `DRYFT_ATTENTION_TUNE=on` to evaluate the optional warmup tuner.
 
-`short_spec.py` is a benchmark-only prototype. It captures separately tuned
+The speculation study imports the shipping `engine/kernels/speculation.py`.
+It captures separately tuned
 two- and three-row verification graphs, retaining ordinary decode for empty
 proposals. Every accepted draft token must equal the target prediction on its
 own prefix; rejection emits the target's correction. The study compares four
@@ -95,4 +103,30 @@ code, and the implementation guide. It tests batch one at 512/32, 2048/32, and
 512/128 prompt/output lengths, rotating trial order and teacher-forcing every
 sample. This is a generalization check, not the judge's hidden corpus. The
 attention sweep and speculation study explicitly disable attention autotuning
-to keep their baselines independent of that experiment.
+and automatic short speculation, so each study controls its own variants.
+Quantization uses the engine default; the current speculation study therefore
+measures its additional benefit over ordinary FP8 decode.
+
+The verifying graphs retain the ordinary graph's weight choices. Where a BF16
+GEMM is faster, it reads reconstructed quantized weights rather than switching
+back to the original weights. Mixing those choices previously caused a large
+teacher-forced failure on a long prose continuation; `speculation_debug`
+rechecks the 512/128 corpus cases. Replay failures are retained in the JSON;
+inspect `passes` on every sample and the per-policy spread, not just the
+process exit status.
+
+`study --stage fp8` compares expanded-weight and postscaled-group FP8 kernels
+across all four projections at batches 2, 3, 4, and 16. `study --stage spec_trace`
+traces the historical failing prefix and compares graph/eager execution and
+individual precision changes. Neither experiment is part of the submitted
+engine.
+
+To check longer contexts and batch sizes outside the three public examples:
+
+```sh
+.venv/bin/modal run bench/modal_bench.py::main --shape-set coverage \
+  --samples 5 --corpus --output bench/results/coverage.json
+```
+
+These development cases cover batch/prompt/output shapes 1/4096/65,
+3/257/33, 8/1024/64, and 32/256/16. They do not represent the hidden workloads.

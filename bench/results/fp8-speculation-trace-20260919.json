@@ -1,0 +1,3787 @@
+{
+  "started_at": "2026-09-20T00:58:30.673940+00:00",
+  "commit": "df9c3d3236c137f738ec7728ef272d24e2ed0a97",
+  "engine_sha256": "16904bbe9569fe69e02b9733f850d2c7c8193baebc96409593d451a043f60803",
+  "stage": "spec_trace",
+  "results": [
+    {
+      "label": "normal",
+      "gap": 22.8125,
+      "tokens": [
+        [
+          13
+        ],
+        [
+          576
+        ],
+        [
+          1790
+        ],
+        [
+          1899
+        ],
+        [
+          11
+        ],
+        [
+          1283
+        ],
+        [
+          264
+        ],
+        [
+          1293
+        ],
+        [
+          323
+        ],
+        [
+          37000
+        ],
+        [
+          3783
+        ],
+        [
+          11
+        ],
+        [
+          1340
+        ],
+        [
+          3949
+        ],
+        [
+          264
+        ],
+        [
+          198
+        ],
+        [
+          9451
+        ],
+        [
+          504
+        ],
+        [
+          1435
+        ],
+        [
+          11
+        ],
+        [
+          892
+        ],
+        [
+          11
+        ],
+        [
+          3498
+        ],
+        [
+          537
+        ],
+        [
+          773
+        ],
+        [
+          2480
+        ],
+        [
+          438
+        ],
+        [
+          279
+        ],
+        [
+          10435
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          198
+        ],
+        [
+          1292
+        ],
+        [
+          1573
+        ],
+        [
+          11
+        ],
+        [
+          572
+        ],
+        [
+          3602
+        ],
+        [
+          14016
+        ],
+        [
+          311
+        ],
+        [
+          2968
+        ],
+        [
+          1059
+        ],
+        [
+          264
+        ],
+        [
+          2480
+        ],
+        [
+          4522
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1584
+        ],
+        [
+          315
+        ],
+        [
+          198
+        ],
+        [
+          25235
+        ],
+        [
+          3971
+        ],
+        [
+          13
+        ],
+        [
+          1084
+        ],
+        [
+          572
+        ],
+        [
+          264
+        ],
+        [
+          6524
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1429
+        ],
+        [
+          27582
+        ],
+        [
+          323
+        ],
+        [
+          36705
+        ],
+        [
+          349
+        ],
+        [
+          3093
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          198
+        ],
+        [
+          34087
+        ],
+        [
+          448
+        ],
+        [
+          279
+        ],
+        [
+          2701
+        ],
+        [
+          5128
+        ],
+        [
+          1447
+        ],
+        [
+          29
+        ],
+        [
+          1036
+        ],
+        [
+          40
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          311
+        ],
+        [
+          498
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          2666
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          29
+        ],
+        [
+          4411
+        ],
+        [
+          498
+        ],
+        [
+          2666
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          432
+        ],
+        [
+          11
+        ],
+        [
+          1576
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          944
+        ],
+        [
+          71
+        ],
+        [
+          766
+        ],
+        [
+          358
+        ],
+        [
+          1265
+        ],
+        [
+          537
+        ],
+        [
+          387
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          11722
+        ],
+        [
+          279
+        ],
+        [
+          21162
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ]
+      ],
+      "stats": {
+        "ordinary_passes": 99,
+        "verify_passes": 20,
+        "accepted": 8,
+        "proposed": 40,
+        "outputs": 128
+      },
+      "trace": [],
+      "text": ". The next day, after a long and anxious wait, she received a\nletter from him, which, though not so full as the conversation of the\nday before, was yet sufficient to give her a full idea of the state of\nhis mind. It was a letter of the most tender and affectionate kind, and\nclosed with the following lines:\n\n> \u201cI have not yet been able to say to you what I feel, and what I\n> believe you feel. I have not yet been able to say it, because I\n'think I should not be able to bear the silence. I have not yet"
+    },
+    {
+      "label": "trace",
+      "gap": 22.8125,
+      "tokens": [
+        [
+          13
+        ],
+        [
+          576
+        ],
+        [
+          1790
+        ],
+        [
+          1899
+        ],
+        [
+          11
+        ],
+        [
+          1283
+        ],
+        [
+          264
+        ],
+        [
+          1293
+        ],
+        [
+          323
+        ],
+        [
+          37000
+        ],
+        [
+          3783
+        ],
+        [
+          11
+        ],
+        [
+          1340
+        ],
+        [
+          3949
+        ],
+        [
+          264
+        ],
+        [
+          198
+        ],
+        [
+          9451
+        ],
+        [
+          504
+        ],
+        [
+          1435
+        ],
+        [
+          11
+        ],
+        [
+          892
+        ],
+        [
+          11
+        ],
+        [
+          3498
+        ],
+        [
+          537
+        ],
+        [
+          773
+        ],
+        [
+          2480
+        ],
+        [
+          438
+        ],
+        [
+          279
+        ],
+        [
+          10435
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          198
+        ],
+        [
+          1292
+        ],
+        [
+          1573
+        ],
+        [
+          11
+        ],
+        [
+          572
+        ],
+        [
+          3602
+        ],
+        [
+          14016
+        ],
+        [
+          311
+        ],
+        [
+          2968
+        ],
+        [
+          1059
+        ],
+        [
+          264
+        ],
+        [
+          2480
+        ],
+        [
+          4522
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1584
+        ],
+        [
+          315
+        ],
+        [
+          198
+        ],
+        [
+          25235
+        ],
+        [
+          3971
+        ],
+        [
+          13
+        ],
+        [
+          1084
+        ],
+        [
+          572
+        ],
+        [
+          264
+        ],
+        [
+          6524
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1429
+        ],
+        [
+          27582
+        ],
+        [
+          323
+        ],
+        [
+          36705
+        ],
+        [
+          349
+        ],
+        [
+          3093
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          198
+        ],
+        [
+          34087
+        ],
+        [
+          448
+        ],
+        [
+          279
+        ],
+        [
+          2701
+        ],
+        [
+          5128
+        ],
+        [
+          1447
+        ],
+        [
+          29
+        ],
+        [
+          1036
+        ],
+        [
+          40
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          311
+        ],
+        [
+          498
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          2666
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          29
+        ],
+        [
+          4411
+        ],
+        [
+          498
+        ],
+        [
+          2666
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          432
+        ],
+        [
+          11
+        ],
+        [
+          1576
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          944
+        ],
+        [
+          71
+        ],
+        [
+          766
+        ],
+        [
+          358
+        ],
+        [
+          1265
+        ],
+        [
+          537
+        ],
+        [
+          387
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          11722
+        ],
+        [
+          279
+        ],
+        [
+          21162
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ]
+      ],
+      "stats": {
+        "ordinary_passes": 99,
+        "verify_passes": 20,
+        "accepted": 8,
+        "proposed": 40,
+        "outputs": 128
+      },
+      "trace": [
+        {
+          "kind": "ordinary",
+          "position": 512,
+          "ids": [
+            13
+          ],
+          "pred": [
+            576
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 513,
+          "ids": [
+            576,
+            198,
+            71
+          ],
+          "pred": [
+            1790,
+            61637,
+            66291
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 514,
+          "ids": [
+            1790
+          ],
+          "pred": [
+            1899
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 515,
+          "ids": [
+            1899
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 516,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1283
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 517,
+          "ids": [
+            1283
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 518,
+          "ids": [
+            264
+          ],
+          "pred": [
+            1293
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 519,
+          "ids": [
+            1293
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 520,
+          "ids": [
+            323
+          ],
+          "pred": [
+            37000
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 521,
+          "ids": [
+            37000
+          ],
+          "pred": [
+            3783
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 522,
+          "ids": [
+            3783
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 523,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1340
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 524,
+          "ids": [
+            1340,
+            2578,
+            614
+          ],
+          "pred": [
+            3949,
+            614,
+            198
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 525,
+          "ids": [
+            3949
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 526,
+          "ids": [
+            264
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 527,
+          "ids": [
+            198
+          ],
+          "pred": [
+            9451
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 528,
+          "ids": [
+            9451
+          ],
+          "pred": [
+            504
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 529,
+          "ids": [
+            504
+          ],
+          "pred": [
+            1435
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 530,
+          "ids": [
+            1435
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 531,
+          "ids": [
+            11,
+            1865,
+            806
+          ],
+          "pred": [
+            892,
+            705,
+            15650
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 532,
+          "ids": [
+            892
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 533,
+          "ids": [
+            11
+          ],
+          "pred": [
+            3498
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 534,
+          "ids": [
+            3498,
+            537,
+            198
+          ],
+          "pred": [
+            537,
+            773,
+            704
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 536,
+          "ids": [
+            773
+          ],
+          "pred": [
+            2480
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 537,
+          "ids": [
+            2480
+          ],
+          "pred": [
+            438
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 538,
+          "ids": [
+            438
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 539,
+          "ids": [
+            279
+          ],
+          "pred": [
+            10435
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 540,
+          "ids": [
+            10435
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 541,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 542,
+          "ids": [
+            279
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 543,
+          "ids": [
+            198,
+            28099,
+            315
+          ],
+          "pred": [
+            1292,
+            315,
+            806
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 544,
+          "ids": [
+            1292
+          ],
+          "pred": [
+            1573
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 545,
+          "ids": [
+            1573
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 546,
+          "ids": [
+            11
+          ],
+          "pred": [
+            572
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 547,
+          "ids": [
+            572
+          ],
+          "pred": [
+            3602
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 548,
+          "ids": [
+            3602
+          ],
+          "pred": [
+            14016
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 549,
+          "ids": [
+            14016
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 550,
+          "ids": [
+            311
+          ],
+          "pred": [
+            2968
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 551,
+          "ids": [
+            2968
+          ],
+          "pred": [
+            1059
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 552,
+          "ids": [
+            1059
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 553,
+          "ids": [
+            264
+          ],
+          "pred": [
+            2480
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 554,
+          "ids": [
+            2480
+          ],
+          "pred": [
+            4522
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 555,
+          "ids": [
+            4522
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 556,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 557,
+          "ids": [
+            279,
+            198,
+            1292
+          ],
+          "pred": [
+            1584,
+            82,
+            748
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 558,
+          "ids": [
+            1584
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 559,
+          "ids": [
+            315
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 560,
+          "ids": [
+            198,
+            25235,
+            6534
+          ],
+          "pred": [
+            25235,
+            3971,
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 562,
+          "ids": [
+            3971
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 563,
+          "ids": [
+            13
+          ],
+          "pred": [
+            1084
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 564,
+          "ids": [
+            1084
+          ],
+          "pred": [
+            572
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 565,
+          "ids": [
+            572
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 566,
+          "ids": [
+            264
+          ],
+          "pred": [
+            6524
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 567,
+          "ids": [
+            6524
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 568,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 569,
+          "ids": [
+            279,
+            1584,
+            315
+          ],
+          "pred": [
+            1429,
+            315,
+            806
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 570,
+          "ids": [
+            1429
+          ],
+          "pred": [
+            27582
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 571,
+          "ids": [
+            27582
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 572,
+          "ids": [
+            323
+          ],
+          "pred": [
+            36705
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 573,
+          "ids": [
+            36705
+          ],
+          "pred": [
+            349
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 574,
+          "ids": [
+            349
+          ],
+          "pred": [
+            3093
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 575,
+          "ids": [
+            3093
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 576,
+          "ids": [
+            11
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 577,
+          "ids": [
+            323,
+            1053,
+            11
+          ],
+          "pred": [
+            198,
+            198,
+            304
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 578,
+          "ids": [
+            198
+          ],
+          "pred": [
+            34087
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 579,
+          "ids": [
+            34087
+          ],
+          "pred": [
+            448
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 580,
+          "ids": [
+            448
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 581,
+          "ids": [
+            279
+          ],
+          "pred": [
+            2701
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 582,
+          "ids": [
+            2701
+          ],
+          "pred": [
+            5128
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 583,
+          "ids": [
+            5128
+          ],
+          "pred": [
+            1447
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 584,
+          "ids": [
+            1447
+          ],
+          "pred": [
+            29
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 585,
+          "ids": [
+            29
+          ],
+          "pred": [
+            1036
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 586,
+          "ids": [
+            1036
+          ],
+          "pred": [
+            40
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 587,
+          "ids": [
+            40
+          ],
+          "pred": [
+            614
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 588,
+          "ids": [
+            614
+          ],
+          "pred": [
+            537
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 589,
+          "ids": [
+            537
+          ],
+          "pred": [
+            3602
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 590,
+          "ids": [
+            3602
+          ],
+          "pred": [
+            1012
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 591,
+          "ids": [
+            1012
+          ],
+          "pred": [
+            2952
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 592,
+          "ids": [
+            2952
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 593,
+          "ids": [
+            311,
+            12828,
+            806
+          ],
+          "pred": [
+            1977,
+            697,
+            6414
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 594,
+          "ids": [
+            1977,
+            264,
+            3409
+          ],
+          "pred": [
+            311,
+            3409,
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 595,
+          "ids": [
+            311
+          ],
+          "pred": [
+            498
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 596,
+          "ids": [
+            498,
+            2578,
+            912
+          ],
+          "pred": [
+            1128,
+            1541,
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 597,
+          "ids": [
+            1128
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 598,
+          "ids": [
+            358
+          ],
+          "pred": [
+            2666
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 599,
+          "ids": [
+            2666
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 600,
+          "ids": [
+            11
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 601,
+          "ids": [
+            323,
+            198,
+            34087
+          ],
+          "pred": [
+            1128,
+            29,
+            448
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 602,
+          "ids": [
+            1128
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 603,
+          "ids": [
+            358,
+            2666,
+            11
+          ],
+          "pred": [
+            198,
+            198,
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 604,
+          "ids": [
+            198
+          ],
+          "pred": [
+            29
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 605,
+          "ids": [
+            29
+          ],
+          "pred": [
+            4411
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 606,
+          "ids": [
+            4411
+          ],
+          "pred": [
+            498
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 607,
+          "ids": [
+            498
+          ],
+          "pred": [
+            2666
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 608,
+          "ids": [
+            2666
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 609,
+          "ids": [
+            13
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 610,
+          "ids": [
+            358,
+            1521,
+            537
+          ],
+          "pred": [
+            614,
+            537,
+            1414
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 611,
+          "ids": [
+            614
+          ],
+          "pred": [
+            537
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 612,
+          "ids": [
+            537,
+            3602,
+            1012
+          ],
+          "pred": [
+            3602,
+            1012,
+            2952
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 615,
+          "ids": [
+            2952,
+            311,
+            1977
+          ],
+          "pred": [
+            311,
+            1977,
+            432
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 618,
+          "ids": [
+            432
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 619,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1576
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 620,
+          "ids": [
+            1576
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 621,
+          "ids": [
+            358
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 622,
+          "ids": [
+            198,
+            29,
+            4411
+          ],
+          "pred": [
+            944,
+            37469,
+            429
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 623,
+          "ids": [
+            944
+          ],
+          "pred": [
+            71
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 624,
+          "ids": [
+            71
+          ],
+          "pred": [
+            766
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 625,
+          "ids": [
+            766
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 626,
+          "ids": [
+            358
+          ],
+          "pred": [
+            1265
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 627,
+          "ids": [
+            1265
+          ],
+          "pred": [
+            537
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 628,
+          "ids": [
+            537
+          ],
+          "pred": [
+            387
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 629,
+          "ids": [
+            387
+          ],
+          "pred": [
+            2952
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 630,
+          "ids": [
+            2952
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 631,
+          "ids": [
+            311,
+            1977,
+            432
+          ],
+          "pred": [
+            11722,
+            432,
+            2041
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 632,
+          "ids": [
+            11722
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 633,
+          "ids": [
+            279
+          ],
+          "pred": [
+            21162
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 634,
+          "ids": [
+            21162
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 635,
+          "ids": [
+            13
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 636,
+          "ids": [
+            358,
+            614,
+            537
+          ],
+          "pred": [
+            614,
+            537,
+            3602
+          ]
+        }
+      ],
+      "text": ". The next day, after a long and anxious wait, she received a\nletter from him, which, though not so full as the conversation of the\nday before, was yet sufficient to give her a full idea of the state of\nhis mind. It was a letter of the most tender and affectionate kind, and\nclosed with the following lines:\n\n> \u201cI have not yet been able to say to you what I feel, and what I\n> believe you feel. I have not yet been able to say it, because I\n'think I should not be able to bear the silence. I have not yet"
+    },
+    {
+      "label": "eager_compare",
+      "gap": 22.8125,
+      "tokens": [
+        [
+          13
+        ],
+        [
+          576
+        ],
+        [
+          1790
+        ],
+        [
+          1899
+        ],
+        [
+          11
+        ],
+        [
+          1283
+        ],
+        [
+          264
+        ],
+        [
+          1293
+        ],
+        [
+          323
+        ],
+        [
+          37000
+        ],
+        [
+          3783
+        ],
+        [
+          11
+        ],
+        [
+          1340
+        ],
+        [
+          3949
+        ],
+        [
+          264
+        ],
+        [
+          198
+        ],
+        [
+          9451
+        ],
+        [
+          504
+        ],
+        [
+          1435
+        ],
+        [
+          11
+        ],
+        [
+          892
+        ],
+        [
+          11
+        ],
+        [
+          3498
+        ],
+        [
+          537
+        ],
+        [
+          773
+        ],
+        [
+          2480
+        ],
+        [
+          438
+        ],
+        [
+          279
+        ],
+        [
+          10435
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          198
+        ],
+        [
+          1292
+        ],
+        [
+          1573
+        ],
+        [
+          11
+        ],
+        [
+          572
+        ],
+        [
+          3602
+        ],
+        [
+          14016
+        ],
+        [
+          311
+        ],
+        [
+          2968
+        ],
+        [
+          1059
+        ],
+        [
+          264
+        ],
+        [
+          2480
+        ],
+        [
+          4522
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1584
+        ],
+        [
+          315
+        ],
+        [
+          198
+        ],
+        [
+          25235
+        ],
+        [
+          3971
+        ],
+        [
+          13
+        ],
+        [
+          1084
+        ],
+        [
+          572
+        ],
+        [
+          264
+        ],
+        [
+          6524
+        ],
+        [
+          315
+        ],
+        [
+          279
+        ],
+        [
+          1429
+        ],
+        [
+          27582
+        ],
+        [
+          323
+        ],
+        [
+          36705
+        ],
+        [
+          349
+        ],
+        [
+          3093
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          198
+        ],
+        [
+          34087
+        ],
+        [
+          448
+        ],
+        [
+          279
+        ],
+        [
+          2701
+        ],
+        [
+          5128
+        ],
+        [
+          1447
+        ],
+        [
+          29
+        ],
+        [
+          1036
+        ],
+        [
+          40
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          311
+        ],
+        [
+          498
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          2666
+        ],
+        [
+          11
+        ],
+        [
+          323
+        ],
+        [
+          1128
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          29
+        ],
+        [
+          4411
+        ],
+        [
+          498
+        ],
+        [
+          2666
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ],
+        [
+          1012
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          1977
+        ],
+        [
+          432
+        ],
+        [
+          11
+        ],
+        [
+          1576
+        ],
+        [
+          358
+        ],
+        [
+          198
+        ],
+        [
+          944
+        ],
+        [
+          71
+        ],
+        [
+          766
+        ],
+        [
+          358
+        ],
+        [
+          1265
+        ],
+        [
+          537
+        ],
+        [
+          387
+        ],
+        [
+          2952
+        ],
+        [
+          311
+        ],
+        [
+          11722
+        ],
+        [
+          279
+        ],
+        [
+          21162
+        ],
+        [
+          13
+        ],
+        [
+          358
+        ],
+        [
+          614
+        ],
+        [
+          537
+        ],
+        [
+          3602
+        ]
+      ],
+      "stats": {
+        "ordinary_passes": 99,
+        "verify_passes": 20,
+        "accepted": 8,
+        "proposed": 40,
+        "outputs": 128
+      },
+      "trace": [
+        {
+          "kind": "ordinary",
+          "position": 512,
+          "ids": [
+            13
+          ],
+          "pred": [
+            576
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 513,
+          "ids": [
+            576,
+            198,
+            71
+          ],
+          "pred": [
+            1790,
+            61637,
+            66291
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 514,
+          "ids": [
+            1790
+          ],
+          "pred": [
+            1899
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 515,
+          "ids": [
+            1899
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 516,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1283
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 517,
+          "ids": [
+            1283
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 518,
+          "ids": [
+            264
+          ],
+          "pred": [
+            1293
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 519,
+          "ids": [
+            1293
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 520,
+          "ids": [
+            323
+          ],
+          "pred": [
+            37000
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 521,
+          "ids": [
+            37000
+          ],
+          "pred": [
+            3783
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 522,
+          "ids": [
+            3783
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 523,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1340
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 524,
+          "ids": [
+            1340,
+            2578,
+            614
+          ],
+          "pred": [
+            3949,
+            614,
+            198
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 525,
+          "ids": [
+            3949
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 526,
+          "ids": [
+            264
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 527,
+          "ids": [
+            198
+          ],
+          "pred": [
+            9451
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 528,
+          "ids": [
+            9451
+          ],
+          "pred": [
+            504
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 529,
+          "ids": [
+            504
+          ],
+          "pred": [
+            1435
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 530,
+          "ids": [
+            1435
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 531,
+          "ids": [
+            11,
+            1865,
+            806
+          ],
+          "pred": [
+            892,
+            705,
+            15650
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 532,
+          "ids": [
+            892
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 533,
+          "ids": [
+            11
+          ],
+          "pred": [
+            3498
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 534,
+          "ids": [
+            3498,
+            537,
+            198
+          ],
+          "pred": [
+            537,
+            773,
+            704
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 536,
+          "ids": [
+            773
+          ],
+          "pred": [
+            2480
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 537,
+          "ids": [
+            2480
+          ],
+          "pred": [
+            438
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 538,
+          "ids": [
+            438
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 539,
+          "ids": [
+            279
+          ],
+          "pred": [
+            10435
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 540,
+          "ids": [
+            10435
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 541,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 542,
+          "ids": [
+            279
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 543,
+          "ids": [
+            198,
+            28099,
+            315
+          ],
+          "pred": [
+            1292,
+            315,
+            806
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 544,
+          "ids": [
+            1292
+          ],
+          "pred": [
+            1573
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 545,
+          "ids": [
+            1573
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 546,
+          "ids": [
+            11
+          ],
+          "pred": [
+            572
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 547,
+          "ids": [
+            572
+          ],
+          "pred": [
+            3602
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 548,
+          "ids": [
+            3602
+          ],
+          "pred": [
+            14016
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 549,
+          "ids": [
+            14016
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 550,
+          "ids": [
+            311
+          ],
+          "pred": [
+            2968
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 551,
+          "ids": [
+            2968
+          ],
+          "pred": [
+            1059
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 552,
+          "ids": [
+            1059
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 553,
+          "ids": [
+            264
+          ],
+          "pred": [
+            2480
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 554,
+          "ids": [
+            2480
+          ],
+          "pred": [
+            4522
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 555,
+          "ids": [
+            4522
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 556,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 557,
+          "ids": [
+            279,
+            198,
+            1292
+          ],
+          "pred": [
+            1584,
+            82,
+            748
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 558,
+          "ids": [
+            1584
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 559,
+          "ids": [
+            315
+          ],
+          "pred": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 560,
+          "ids": [
+            198,
+            25235,
+            6534
+          ],
+          "pred": [
+            25235,
+            3971,
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 562,
+          "ids": [
+            3971
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 563,
+          "ids": [
+            13
+          ],
+          "pred": [
+            1084
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 564,
+          "ids": [
+            1084
+          ],
+          "pred": [
+            572
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 565,
+          "ids": [
+            572
+          ],
+          "pred": [
+            264
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 566,
+          "ids": [
+            264
+          ],
+          "pred": [
+            6524
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 567,
+          "ids": [
+            6524
+          ],
+          "pred": [
+            315
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 568,
+          "ids": [
+            315
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 569,
+          "ids": [
+            279,
+            1584,
+            315
+          ],
+          "pred": [
+            1429,
+            315,
+            806
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 570,
+          "ids": [
+            1429
+          ],
+          "pred": [
+            27582
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 571,
+          "ids": [
+            27582
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 572,
+          "ids": [
+            323
+          ],
+          "pred": [
+            36705
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 573,
+          "ids": [
+            36705
+          ],
+          "pred": [
+            349
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 574,
+          "ids": [
+            349
+          ],
+          "pred": [
+            3093
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 575,
+          "ids": [
+            3093
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 576,
+          "ids": [
+            11
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 577,
+          "ids": [
+            323,
+            1053,
+            11
+          ],
+          "pred": [
+            198,
+            198,
+            304
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 578,
+          "ids": [
+            198
+          ],
+          "pred": [
+            34087
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 579,
+          "ids": [
+            34087
+          ],
+          "pred": [
+            448
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 580,
+          "ids": [
+            448
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 581,
+          "ids": [
+            279
+          ],
+          "pred": [
+            2701
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 582,
+          "ids": [
+            2701
+          ],
+          "pred": [
+            5128
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 583,
+          "ids": [
+            5128
+          ],
+          "pred": [
+            1447
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 584,
+          "ids": [
+            1447
+          ],
+          "pred": [
+            29
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 585,
+          "ids": [
+            29
+          ],
+          "pred": [
+            1036
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 586,
+          "ids": [
+            1036
+          ],
+          "pred": [
+            40
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 587,
+          "ids": [
+            40
+          ],
+          "pred": [
+            614
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 588,
+          "ids": [
+            614
+          ],
+          "pred": [
+            537
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 589,
+          "ids": [
+            537
+          ],
+          "pred": [
+            3602
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 590,
+          "ids": [
+            3602
+          ],
+          "pred": [
+            1012
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 591,
+          "ids": [
+            1012
+          ],
+          "pred": [
+            2952
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 592,
+          "ids": [
+            2952
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 593,
+          "ids": [
+            311,
+            12828,
+            806
+          ],
+          "pred": [
+            1977,
+            697,
+            6414
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 594,
+          "ids": [
+            1977,
+            264,
+            3409
+          ],
+          "pred": [
+            311,
+            3409,
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 595,
+          "ids": [
+            311
+          ],
+          "pred": [
+            498
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 596,
+          "ids": [
+            498,
+            2578,
+            912
+          ],
+          "pred": [
+            1128,
+            1541,
+            311
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 597,
+          "ids": [
+            1128
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 598,
+          "ids": [
+            358
+          ],
+          "pred": [
+            2666
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 599,
+          "ids": [
+            2666
+          ],
+          "pred": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 600,
+          "ids": [
+            11
+          ],
+          "pred": [
+            323
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 601,
+          "ids": [
+            323,
+            198,
+            34087
+          ],
+          "pred": [
+            1128,
+            29,
+            448
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 602,
+          "ids": [
+            1128
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 603,
+          "ids": [
+            358,
+            2666,
+            11
+          ],
+          "pred": [
+            198,
+            198,
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 604,
+          "ids": [
+            198
+          ],
+          "pred": [
+            29
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 605,
+          "ids": [
+            29
+          ],
+          "pred": [
+            4411
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 606,
+          "ids": [
+            4411
+          ],
+          "pred": [
+            498
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 607,
+          "ids": [
+            498
+          ],
+          "pred": [
+            2666
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 608,
+          "ids": [
+            2666
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 609,
+          "ids": [
+            13
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 610,
+          "ids": [
+            358,
+            1521,
+            537
+          ],
+          "pred": [
+            614,
+            537,
+            1414
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 611,
+          "ids": [
+            614
+          ],
+          "pred": [
+            537
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 612,
+          "ids": [
+            537,
+            3602,
+            1012
+          ],
+          "pred": [
+            3602,
+            1012,
+            2952
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 615,
+          "ids": [
+            2952,
+            311,
+            1977
+          ],
+          "pred": [
+            311,
+            1977,
+            432
+          ],
+          "eager": [
+            311,
+            1977,
+            432
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 618,
+          "ids": [
+            432
+          ],
+          "pred": [
+            11
+          ],
+          "eager": [
+            11
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 619,
+          "ids": [
+            11
+          ],
+          "pred": [
+            1576
+          ],
+          "eager": [
+            1576
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 620,
+          "ids": [
+            1576
+          ],
+          "pred": [
+            358
+          ],
+          "eager": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 621,
+          "ids": [
+            358
+          ],
+          "pred": [
+            198
+          ],
+          "eager": [
+            198
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 622,
+          "ids": [
+            198,
+            29,
+            4411
+          ],
+          "pred": [
+            944,
+            37469,
+            429
+          ],
+          "eager": [
+            944,
+            37469,
+            429
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 623,
+          "ids": [
+            944
+          ],
+          "pred": [
+            71
+          ],
+          "eager": [
+            71
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 624,
+          "ids": [
+            71
+          ],
+          "pred": [
+            766
+          ],
+          "eager": [
+            766
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 625,
+          "ids": [
+            766
+          ],
+          "pred": [
+            358
+          ],
+          "eager": [
+            358
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 626,
+          "ids": [
+            358
+          ],
+          "pred": [
+            1265
+          ],
+          "eager": [
+            1265
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 627,
+          "ids": [
+            1265
+          ],
+          "pred": [
+            537
+          ],
+          "eager": [
+            537
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 628,
+          "ids": [
+            537
+          ],
+          "pred": [
+            387
+          ],
+          "eager": [
+            387
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 629,
+          "ids": [
+            387
+          ],
+          "pred": [
+            2952
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 630,
+          "ids": [
+            2952
+          ],
+          "pred": [
+            311
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 631,
+          "ids": [
+            311,
+            1977,
+            432
+          ],
+          "pred": [
+            11722,
+            432,
+            2041
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 632,
+          "ids": [
+            11722
+          ],
+          "pred": [
+            279
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 633,
+          "ids": [
+            279
+          ],
+          "pred": [
+            21162
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 634,
+          "ids": [
+            21162
+          ],
+          "pred": [
+            13
+          ]
+        },
+        {
+          "kind": "ordinary",
+          "position": 635,
+          "ids": [
+            13
+          ],
+          "pred": [
+            358
+          ]
+        },
+        {
+          "kind": "verify",
+          "position": 636,
+          "ids": [
+            358,
+            614,
+            537
+          ],
+          "pred": [
+            614,
+            537,
+            3602
+          ]
+        }
+      ],
+      "text": ". The next day, after a long and anxious wait, she received a\nletter from him, which, though not so full as the conversation of the\nday before, was yet sufficient to give her a full idea of the state of\nhis mind. It was a letter of the most tender and affectionate kind, and\nclosed with the following lines:\n\n> \u201cI have not yet been able to say to you what I feel, and what I\n> believe you feel. I have not yet been able to say it, because I\n'think I should not be able to bear the silence. I have not yet"
+    }
+  ]
+}

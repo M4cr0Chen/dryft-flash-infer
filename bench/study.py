@@ -191,7 +191,7 @@ def speculation_study(engine, prompts, steps):
     from pathlib import Path
     import harness
     from harness import _time_stream, _replay, _validate_stream
-    from short_spec import ShortVerifier
+    from kernels.speculation import ShortVerifier
     from transformers import AutoTokenizer
     from transformers.models.qwen3 import modeling_qwen3
 
@@ -233,14 +233,25 @@ def speculation_study(engine, prompts, steps):
             # affect the comparison order or GPU state between candidates.
             for label, first, total, emitted, stats in records:
                 gap, exact = _replay(engine._native, engine.device, inputs, emitted, steps)
-                if not math.isfinite(gap) or gap > 2.0:
-                    raise AssertionError(f"{domain}/{label}: teacher-forced gap {gap}")
+                passed = math.isfinite(gap) and gap <= 2.0
+                failure = None
+                if not passed:
+                    tokens = torch.tensor(emitted, device=engine.device).T
+                    full = torch.cat([torch.tensor(inputs, device=engine.device), tokens], dim=1)
+                    logits = engine._native(input_ids=full, logits_to_keep=steps + 1).logits[:, :steps].float()
+                    gaps = logits.max(dim=-1).values - logits.gather(2, tokens[:, :, None])[:, :, 0]
+                    bad = (gaps[0] > 2.0).nonzero().flatten().tolist()
+                    failure = {"positions": bad, "gaps": [gaps[0, i].item() for i in bad],
+                               "tokens": [emitted[i][0] for i in bad],
+                               "expected": [logits[0, i].argmax().item() for i in bad]}
+                    print(f"FAIL {domain}/{seed}/{label}: {failure}; stats={stats}", flush=True)
                 row = {"domain": domain, "seed": seed, "variant": label,
                        "ttft_ms": first * 1000, "total_ms": total * 1000,
                        "tps": steps / total, "tie_gap": gap, "argmax_exact": exact,
-                       "matches_ordinary_tokens": emitted == baseline_tokens, "stats": stats}
+                       "matches_ordinary_tokens": emitted == baseline_tokens, "stats": stats,
+                       "passes": passed, "failure": failure}
                 rows.append(row)
-            print(f"speculation s{context} o{steps} {domain} seed={seed}: checked", flush=True)
+            print(f"speculation s{context} o{steps} {domain} seed={seed}: replayed", flush=True)
     summary = []
     for domain in corpora:
         baseline = statistics.median(r["total_ms"] for r in rows
@@ -248,12 +259,16 @@ def speculation_study(engine, prompts, steps):
         for label in ["baseline"] + [v[0] for v in variants]:
             timings = [r["total_ms"] for r in rows if r["domain"] == domain and r["variant"] == label]
             median = statistics.median(timings)
+            checks = [r for r in rows if r["domain"] == domain and r["variant"] == label]
             summary.append({"domain": domain, "variant": label, "median_ms": median,
                             "speedup": baseline / median,
+                            "teacher_forced_passes": all(r["passes"] for r in checks),
+                            "worst_tie_gap": max(r["tie_gap"] for r in checks),
                             "spread": (max(timings) - min(timings)) / median})
     for row in summary:
         print(f"{row['domain']:10s} {row['variant']:28s} "
-              f"{row['speedup']:.3f}x spread={row['spread']:.3f}", flush=True)
+              f"{row['speedup']:.3f}x spread={row['spread']:.3f} "
+              f"replay={'pass' if row['teacher_forced_passes'] else 'FAIL'}", flush=True)
     return {"batch": 1, "context": context, "output": steps, "samples": rows,
             "summary": summary}
 
@@ -305,17 +320,21 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     # The dispatch sweep and verifier compare against the original attention
     # heuristic, keeping their measurements independent of a new tuner.
-    if stage in ("attention", "attention_paired", "speculation"):
+    if stage in ("attention", "attention_paired", "speculation", "speculation_debug", "speculation_mlp"):
         import engine as engine_module
         engine_module.TUNE_ATTENTION = False
+        engine_module.SHORT_DRAFT = 0
     load_corpus("/root/corpus.txt", "/weights/qwen3-4b")
     engine = Engine("/weights/qwen3-4b")
+    if stage == "speculation_mlp":
+        engine.quantised = {name: weights for name, weights in engine.quantised.items()
+                            if name in ("gate_up", "down")}
     prompts = _prompts(batch, context, engine.embed.shape[0], 9001)
     if stage == "profile":
         result = profile_mlp(engine, prompts, steps)
     elif stage == "attention":
         result = attention_study(engine, prompts, steps)
-    elif stage == "speculation":
+    elif stage in ("speculation", "speculation_debug", "speculation_mlp"):
         result = speculation_study(engine, prompts, steps)
     elif stage == "attention_paired":
         result = attention_paired(engine, prompts, steps)

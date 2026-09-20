@@ -89,9 +89,13 @@ In rough order of payoff against these shapes:
   construction, because verification reproduces the same argmax. Expensive to
   get right; leave it until the cheap wins are taken.
 
-Do not reach for quantization, cache eviction, approximate or sparse attention,
-or a smaller draft model used without verification. All of them shift logits by
-whole units and fail rule 3.
+The user relayed organizer confirmation on September 19 that **quantization is
+allowed**; the older prohibition in the challenge documents is stale. Every
+emitted token must still pass the native teacher-forced 2.0-logit margin.
+Validate quantized paths end to end, including speculative verification.
+
+Do not use cache eviction, approximate or sparse attention, or a smaller draft
+model without verification. They can shift logits beyond the accepted margin.
 
 ## Numerics
 

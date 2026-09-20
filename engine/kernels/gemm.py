@@ -183,10 +183,9 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
         for cfg in FP8_CONFIGS:
             runner = functools.partial(fp8_matmul, config=cfg)
             try:
-                # FP8 rounds more coarsely by construction. What matters is the
-                # logit shift it causes end to end, measured at 0.375 against a
-                # 2.0 margin; a per-projection 2% bound would reject it on a
-                # criterion the benchmark never applies.
+                # This projection check catches gross implementation errors.
+                # FP8's coarser rounding needs separate end-to-end replay;
+                # passing this local bound does not establish token validity.
                 if not agrees(runner(x, packed[0]), tolerance=0.08):
                     continue
             except Exception:
