@@ -22,7 +22,7 @@ import triton.language as tl
 from . import cuda_jit
 
 PDL = {"off": 0, "late": 1, "on": 2, "early": 2}[os.environ.get("DRYFT_PDL", "early")]
-ENABLED = PDL != 0 and os.environ.get("DRYFT_TRITON_PDL", "on") == "on"
+ENABLED = PDL != 0 and os.environ.get("DRYFT_TRITON_PDL", "off") == "on"
 #: Diagnostic: relaunch through the handle but without the programmatic
 #: attribute, to separate argument-marshalling errors from ordering races.
 ATTRIBUTE = os.environ.get("DRYFT_TRITON_PDL_ATTR", "on") == "on"

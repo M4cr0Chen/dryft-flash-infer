@@ -71,11 +71,34 @@ Repeated runs of the same commit on the platform, all passing:
 | `b8ed20c` | 1212.1 | 1211.1 |
 | `cb6bb56` | 1224.0 | 806.3 |
 | `526318f` | 1257.7 | 1106.1 |
-| `8fc53e0` (all ten kernels in the chain) | 1227.1 | pending |
+| `8fc53e0` (all ten kernels in the chain) | 1227.1 | 1217.1 |
 
 A third of the runs land 10-35% low with every public case still passing,
 so a single official number is not a measurement of a 2% change; the paired
 local runs are. Compare commits on their best or median of several runs.
+
+### The Triton kernels leave the chain again
+
+`8fc53e0` scored 1227.1 and 1217.1, two consistent runs, against the 1257.7
+of `526318f`. A second paired run on the same GPU, with a 16 x 2048 -> 64
+and a 32 x 512 -> 64 shape added (`paired-tritonpdl-vs-526318f-long`), put
+it at -3.9% / -1.5% / -1.9% / -1.4% / -0.0%, geomean **-1.7%**, where the
+first paired run had said +2.1%. Local paired runs, too, move by a few
+percent between sessions, so a 2% result needs two of them. Releasing
+attention's dependents after its KV loop instead of at entry
+(`DRYFT_ATTN_TRIGGER`, `paired-attn-late-trigger`) changed nothing (-0.2%).
+The programmatic Triton launch stays in the tree (`DRYFT_TRITON_PDL=on`),
+default off; the shipped chain is the eight CUDA kernels.
+
+### A margin warning at batch 32
+
+The 32 x 512 -> 64 corpus sample has a tie gap of **2.562** on both engines
+above (margin 2.0): the INT8 MLP at batch 32 is over the line on some
+prompts. The official hidden set has passed every run, so its prompts are
+not these, but the margin there is thin. `DRYFT_FP8_PROJECTIONS=qkv,o,lm_head`
+puts the MLP back on bf16 weights at a bandwidth cost; a batch-conditional
+version of that (bf16 MLP at batch >= 32 only) would be the safe default if
+the hidden set is believed to include batch 32.
 
 ### RoPE and attention join the chain, without a rewrite
 

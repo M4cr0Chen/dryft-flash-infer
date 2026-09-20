@@ -200,8 +200,12 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
                       long_context: bool = False, candidate_kv: str = "bf16",
                       baseline_fp8: str = "off", candidate_int8_mma: str = "off",
                       baseline_int8_mma: str = "off", candidate_int4: str = "",
-                      candidate_pdl: str = "off", wide: bool = False):
-    """Alternate old/new order across workloads, on one physical H100."""
+                      candidate_pdl: str = "off", wide: bool = False, extra: str = "",
+                      baseline_pdl: str = "early", candidate_env: str = ""):
+    """Alternate old/new order across workloads, on one physical H100.
+
+    ``extra`` adds shapes as ``batchxpromptxoutput`` items, comma separated.
+    """
     import os
     import sys
     from pathlib import Path
@@ -238,6 +242,9 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         shapes.append(("coverage-long", 1, 4096, 65))
     if wide:
         shapes += [("coverage-wide", 32, 256, 16), ("coverage-wide-long", 32, 512, 64)]
+    for item in filter(None, extra.split(",")):
+        b, p, o = (int(v) for v in item.split("x"))
+        shapes.append((f"extra-{b}x{p}x{o}", b, p, o))
     for index, shape in enumerate(shapes):
         order = ["baseline", "candidate"] if index % 2 == 0 else ["candidate", "baseline"]
         for label in order:
@@ -245,7 +252,13 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
             os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
             os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else baseline_int8_mma
             os.environ["DRYFT_INT4_PROJECTIONS"] = candidate_int4 if label == "candidate" else ""
-            os.environ["DRYFT_PDL"] = candidate_pdl if label == "candidate" else "off"
+            os.environ["DRYFT_PDL"] = candidate_pdl if label == "candidate" else baseline_pdl
+            for item in filter(None, candidate_env.split(",")):
+                key, value = item.split("=", 1)
+                if label == "candidate":
+                    os.environ[key] = value
+                else:
+                    os.environ.pop(key, None)
             os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
@@ -263,7 +276,8 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
             candidate_fp8: str = "on", short_draft: int = 2,
             long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
             candidate_int8_mma: str = "off", baseline_int8_mma: str = "off",
-            candidate_int4: str = "", candidate_pdl: str = "off", wide: bool = False):
+            candidate_int4: str = "", candidate_pdl: str = "off", wide: bool = False,
+            extra: str = "", baseline_pdl: str = "early", candidate_env: str = ""):
     import hashlib
     import json
     import subprocess
@@ -301,7 +315,8 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
                                        baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma,
                                        baseline_int8_mma=baseline_int8_mma,
                                        candidate_int4=candidate_int4, candidate_pdl=candidate_pdl,
-                                       wide=wide)
+                                       wide=wide, extra=extra, baseline_pdl=baseline_pdl,
+                                       candidate_env=candidate_env)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")

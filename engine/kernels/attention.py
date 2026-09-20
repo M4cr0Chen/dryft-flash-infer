@@ -26,6 +26,10 @@ import triton.language as tl
 
 from .triton_pdl import Programmatic, gdc_trigger, gdc_wait
 
+#: When attention releases its dependents: at entry ("early") or after the KV
+#: loop ("late"). Long contexts are where the difference lives.
+ATTENTION_TRIGGER_LATE = os.environ.get("DRYFT_ATTN_TRIGGER", "late") == "late"
+
 _BLOCK_N = 64
 _PAD_M = 16  # tl.dot wants at least 16 rows; a KV group only has four
 # 128 programs nearly fill an H100's 132 SMs. Doubling that work merely to
@@ -39,8 +43,13 @@ def _split_kernel(
     LMAX: tl.constexpr, SPLIT: tl.constexpr, SPLITS: tl.constexpr,
     GROUP: tl.constexpr, D: tl.constexpr, BLOCK_N: tl.constexpr, PAD_M: tl.constexpr,
     TOKENS: tl.constexpr, NKV: tl.constexpr, DIRECT: tl.constexpr, QUANT: tl.constexpr,
+    TRIGGER_LATE: tl.constexpr,
 ):
-    gdc_trigger()
+    # Trigger at entry lets the next GEMM's blocks sit on the SMs for this
+    # whole kernel; for a long context that is a lot of occupancy to lend.
+    # TRIGGER_LATE releases them only once the KV loop is done.
+    if not TRIGGER_LATE:
+        gdc_trigger()
     gdc_wait()
     head = tl.program_id(0)  # batch * n_kv_heads + kv_head
     part = tl.program_id(1)
@@ -105,6 +114,8 @@ def _split_kernel(
     peak = tl.where(empty, -float("inf"), peak)
     total = tl.where(empty, 0.0, total)
 
+    if TRIGGER_LATE:
+        gdc_trigger()
     if DIRECT:
         # One partition already holds the entire softmax reduction. Avoid
         # materialising fp32 partials and launching a separate merge kernel.
@@ -290,7 +301,7 @@ class DecodeAttention:
             LMAX=self.capacity, SPLIT=self.split_len, SPLITS=self.splits,
             GROUP=self.group, D=self.head_dim, BLOCK_N=self.block_n, PAD_M=self.pad_m,
             TOKENS=self.tokens, NKV=self.n_kv, DIRECT=self.direct, QUANT=self.quant,
-            num_warps=self.warps,
+            TRIGGER_LATE=ATTENTION_TRIGGER_LATE, num_warps=self.warps,
         )
         if self.direct:
             return self.out
