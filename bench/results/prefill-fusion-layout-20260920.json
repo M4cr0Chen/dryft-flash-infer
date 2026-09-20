@@ -1,0 +1,715 @@
+{
+  "started_at": "2026-09-20T10:29:45.565488+00:00",
+  "commit": "36e856c1d32c89761be8a2349ad7e0402d02d3c4",
+  "engine_files_sha256": {
+    "engine.py": "ecdada5cda83b74fbf32defbfe4bd93ff3188bd4a5e4b9a988b61ab94dc4884b",
+    "kernels/__init__.py": "171fc64404dc4b980e268a8ebff20b0f026567ec775699a99efc2e126b95d2b0",
+    "kernels/attention.py": "8bfea6948638bc4a030d3cabaa5129b563a04489993bcb058c03e830af82822f",
+    "kernels/cuda_fp8.py": "f231f5e1a6e2f97dfc64f96bccee22f80fcf9e3161c9c89a280dac10004f7d44",
+    "kernels/cuda_gemv.py": "417e5f288361f551c27ddb6cec96b692a92b77307270a044d334764cc8036d8b",
+    "kernels/cuda_int8.py": "1957c41079c86a672e2c216d752654914532bb130d106c03d37e32edc1c7accc",
+    "kernels/cuda_jit.py": "64d68cbe48e87ceb3fd126d5ad32752cbb0d8f35116397e8d9318eb2b76fd02f",
+    "kernels/cuda_mlp.py": "539ae16ac662702c409985f4ab5f42f249845acd3f522d1594b183ee10657f82",
+    "kernels/cuda_qkv.py": "1e6e6c1cd3252e67ce84105939484e3456b3d8bb7879ffcbff1727f86399753e",
+    "kernels/cuda_small.py": "ed47bfab23b440731da281ed50b3b0b3534255e8041c7426fb2cf37f3653fa96",
+    "kernels/fp8.py": "6c448eb10dbfba5eb6b513d434f813fa2592975dbfefef6a5744fd2d6b8fb1f9",
+    "kernels/gemm.py": "1f615274235616a600f9e4482d0aac2601a1cad7e846c8f6a293d70a91abbfdc",
+    "kernels/ngram.py": "3c13f9a3e80451f27cee2438d648739d720ae726fdb35d66ca759b741ed7c8a8",
+    "kernels/norm.py": "e0b9fda28eb742dda58632212e97eef0bb8daaabfb0178c27d80069923094a24",
+    "kernels/reference.py": "5a5f1e4e4fb3ac907d6f39419a154df6dbc136ca4548eece6d847833403b77ed",
+    "kernels/rope.py": "20f54af5b4c5206fe2d3beb82531ebe56a2492d251e580dccfeb637085f241ef",
+    "kernels/speculation.py": "fbea68cbefac28b3540c8e4dcc6e5cfa6e3556a2826dfc24145bd1c19732b790",
+    "kernels/swiglu.py": "756ad84294a3a769a268a69534b40e23f878ecd749647369576d60c44b37a3a4",
+    "kernels/timing.py": "0cbde6733ee3d199ebe7e43f645666a75a2f735f5339cb5a9cacd95ab06947f7",
+    "kernels/triton_pdl.py": "9f002d7867780d4c41bff36a6febafd48f1ac21de54f2f4e7e1fbe5bb436a0ef"
+  },
+  "stage": "layout",
+  "results": [
+    [
+      {
+        "rows": 512,
+        "baseline_ms": 0.09473599990208943,
+        "candidates": [
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.11059199770291646,
+            "speedup": 0.856626174314881,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.7420480251312256,
+            "speedup": 0.12766828654430565,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 0.11086933811505635,
+            "speedup": 0.8544833180457495,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.12370666861534119,
+            "speedup": 0.7658115844721808,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 0.12359467148780823,
+            "speedup": 0.7665055358914441,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              32,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 0.12227200468381245,
+            "speedup": 0.7747971430342591,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.8469546635945638,
+            "speedup": 0.11185486540686838,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              128,
+              8,
+              2
+            ],
+            "transposed": false,
+            "ms": 0.1446293294429779,
+            "speedup": 0.6550261988142619,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.10481066505114238,
+            "speedup": 0.90387748094016,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.1237493356068929,
+            "speedup": 0.7655475436492977,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.15436800320943198,
+            "speedup": 0.6137023083310895,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 0.12686933080355325,
+            "speedup": 0.7467210499342851,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.09453866879145305,
+            "speedup": 1.0020873057888269,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.7443892955780029,
+            "speedup": 0.12726674129365184,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 0.09204266468683879,
+            "speedup": 1.029261812708425,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.11168533563613892,
+            "speedup": 0.848240275793512,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 0.11122133334477742,
+            "speedup": 0.851779034229119,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              32,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 0.10339732964833577,
+            "speedup": 0.9162325586579039,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.8172480265299479,
+            "speedup": 0.11592074477602651,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              128,
+              8,
+              2
+            ],
+            "transposed": true,
+            "ms": 0.15149333079655966,
+            "speedup": 0.6253476598868262,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.10159466663996379,
+            "speedup": 0.9324898937640059,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.1015786627928416,
+            "speedup": 0.9326368087291421,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.12497066458066304,
+            "speedup": 0.758065904666303,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 0.1228000024954478,
+            "speedup": 0.771465781571147,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          }
+        ]
+      },
+      {
+        "rows": 8192,
+        "baseline_ms": 1.2813546657562256,
+        "candidates": [
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 1.4235946337382,
+            "speedup": 0.9000839391980088,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 9.389792124430338,
+            "speedup": 0.13646251682424365,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 1.392367998758952,
+            "speedup": 0.9202701203261818,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 1.4993653297424316,
+            "speedup": 0.8545980358078195,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 1.5955039660135906,
+            "speedup": 0.8031034037212234,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              32,
+              8,
+              4
+            ],
+            "transposed": false,
+            "ms": 1.4810667037963867,
+            "speedup": 0.8651566215564475,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 11.274164835611979,
+            "speedup": 0.11365406524027212,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              128,
+              8,
+              2
+            ],
+            "transposed": false,
+            "ms": 1.91758394241333,
+            "speedup": 0.6682130765778143,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": false,
+            "ms": 1.5376426378885906,
+            "speedup": 0.8333240989699102,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 1.7068479855855305,
+            "speedup": 0.7507139924453551,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 2.352479934692383,
+            "speedup": 0.5446825058356042,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": false,
+            "ms": 2.027887980143229,
+            "speedup": 0.6318665914010319,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 1.1832693417867024,
+            "speedup": 1.082893488832743,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 9.390682856241861,
+            "speedup": 0.13644957298334554,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              64,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 1.4569387435913086,
+            "speedup": 0.8794842414566629,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 2.4081546465555825,
+            "speedup": 0.5320898587592642,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              64,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 1.657647927602132,
+            "speedup": 0.7729956671859549,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              128,
+              32,
+              8,
+              4
+            ],
+            "transposed": true,
+            "ms": 1.2898933092753093,
+            "speedup": 0.9933803490120583,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              256,
+              256,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 11.114053090413412,
+            "speedup": 0.11529139327771222,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              256,
+              128,
+              8,
+              2
+            ],
+            "transposed": true,
+            "ms": 2.3398879369099936,
+            "speedup": 0.5476136893326419,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              8,
+              3
+            ],
+            "transposed": true,
+            "ms": 1.7656906445821126,
+            "speedup": 0.725696015713718,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              128,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 1.8229759534200032,
+            "speedup": 0.7028916993404843,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              256,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 2.4628639221191406,
+            "speedup": 0.5202701839303001,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          },
+          {
+            "config": [
+              64,
+              128,
+              64,
+              4,
+              3
+            ],
+            "transposed": true,
+            "ms": 2.5946292877197266,
+            "speedup": 0.49384884068827267,
+            "max_abs": 0.0,
+            "relative_rms": 0.0
+          }
+        ]
+      }
+    ]
+  ]
+}

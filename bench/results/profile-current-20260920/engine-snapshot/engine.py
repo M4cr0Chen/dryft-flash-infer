@@ -78,12 +78,6 @@ INT4_PROJECTIONS = set(filter(None, os.environ.get("DRYFT_INT4_PROJECTIONS", "")
 #: step pays Python dispatch again.
 USE_GRAPH = os.environ.get("DRYFT_GRAPH", "on") == "on"
 PREFILL_GRAPH = os.environ.get("DRYFT_PREFILL_GRAPH", "off") == "on"
-#: BF16 gate/up + SwiGLU, with a load-time weight relayout and warmup-only
-#: selection against cuBLAS. Small prefills retain the existing path.
-PREFILL_MLP = os.environ.get("DRYFT_PREFILL_MLP", "on") == "on"
-#: Compare output-projection split-K schedules inside the complete decode
-#: graph, retaining the existing weight family and the non-PDL Triton path.
-DECODE_OUT_TUNE = os.environ.get("DRYFT_DECODE_OUT_TUNE", "on") == "on"
 #: Native integer MMA wins gate/up with two activation tiles (batches 9--16).
 #: Wider MLP quantization and combining it with the LM head failed replay.
 #: Keep those off; the warmup race still requires a 3% operation-level gain.
@@ -208,14 +202,6 @@ class Engine:
             print("engine: custom path unavailable, using native Qwen", file=sys.stderr)
             self._fast = False
 
-        if self._fast and PREFILL_MLP and HAVE_TRITON and self.cuda:
-            try:
-                from kernels.prefill_mlp import PrefillMLP
-                self.prefill_mlp = PrefillMLP([layer.gate_up for layer in self.layers])
-            except Exception:
-                traceback.print_exc()
-                print("engine: prefill MLP relayout unavailable; retaining cuBLAS", file=sys.stderr)
-
     # ---------------------------------------------------------------- loading
 
     def _adopt(self, model) -> None:
@@ -250,7 +236,6 @@ class Engine:
         self.graph = None
         self.short_verifier = None
         self.prefill_graph = None
-        self.prefill_mlp = None
         self.quantised = None
         self.integer_operands = {}
         self.integer_mlp = self.integer_head = False
@@ -429,11 +414,6 @@ class Engine:
         # one. A batch-one GEMV is not a valid runner for that matrix.
         self._choose_matmuls(batch * (self.draft + 1))
         lap("projection race")
-        if self.prefill_mlp is not None:
-            chunk_batch = max(1, PREFILL_ROW_BUDGET // seq_len)
-            for start in range(0, batch, chunk_batch):
-                self.prefill_mlp.tune(min(chunk_batch, batch - start) * seq_len)
-            lap("prefill MLP race")
 
         self.drafter = None
         if self.draft:
@@ -457,14 +437,6 @@ class Engine:
             )
 
         self._capture()
-        if DECODE_OUT_TUNE and self.cuda and not self._quick_race:
-            try:
-                from kernels.decode_tuning import tune_output_projection
-                if tune_output_projection(self):
-                    self._capture()
-            except Exception:
-                traceback.print_exc()
-                print("engine: output graph race unavailable; keeping existing schedule", file=sys.stderr)
         lap("compile and capture")
         if (SHORT_DRAFT and batch == 1 and not self.draft
                 and (not self.cuda or self.graph is not None)):
@@ -949,8 +921,6 @@ class Engine:
             x, normed = add_project_norm("o", index, x, attended, layer.o, layer.norm_post)
             if matmul and self.fused_mlp is not None:
                 inner = self.fused_mlp(normed, self.fused_operand[index])
-            elif matmul is None and self.prefill_mlp is not None:
-                inner = self.prefill_mlp(normed, index)
             else:
                 inner = swiglu(project("gate_up", index, normed, layer.gate_up))
             following = (

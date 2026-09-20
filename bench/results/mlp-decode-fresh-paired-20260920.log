@@ -1,0 +1,448 @@
+✓ Initialized. View run at 
+https://modal.com/apps/macrochen05/main/ap-9S2U6F1YhyLEW5GUEKFBhj
+✓ Created objects.
+├── 🔨 Created mount 
+│   /Users/marcochen/code/htn/dryft-flash-infer/bench/modal_bench.py
+├── 🔨 Created mount OPTIMIZATION_GUIDE.md
+├── 🔨 Created mount bench/coop_probe.py
+├── 🔨 Created mount bench/probe_kernels.py
+├── 🔨 Created mount bench/study.py
+├── 🔨 Created mount bench/spec_trace.py
+├── 🔨 Created mount bench/tiled_probe.py
+├── 🔨 Created mount bench/coal_probe.py
+├── 🔨 Created mount bench/gemm_bisect.py
+├── 🔨 Created mount bench/share_probe.py
+├── 🔨 Created mount bench/triton_abi_probe.py
+├── 🔨 Created mount bench/triton_pdl_probe.py
+├── 🔨 Created mount bench/pdl_diag.py
+├── 🔨 Created mount 
+│   /var/folders/0t/yy1dfwsd21s7cmlws6jt70xw0000gn/T/dryft-mlp-baseline-0go61ilo
+│   /engine
+├── 🔨 Created mount bench/pdl_probe.py
+├── 🔨 Created mount bench/int4_probe.py
+├── 🔨 Created mount bench/latency_probe.py
+├── 🔨 Created mount bench/fused_probe.py
+├── 🔨 Created mount bench/fp8_mma_probe.py
+├── 🔨 Created mount bench/fp8_tuning.py
+├── 🔨 Created mount bench/gpu_checks.py
+├── 🔨 Created mount bench/replay.py
+├── 🔨 Created mount bench/harness.py
+├── 🔨 Created mount /Users/marcochen/code/htn/dryft-flash-infer/engine
+├── 🔨 Created function study_remote.
+├── 🔨 Created function fetch.
+├── 🔨 Created function benchmark.
+├── 🔨 Created function compare_benchmark.
+├── 🔨 Created function check.
+├── 🔨 Created function profile.
+├── 🔨 Created function shell.
+├── 🔨 Created function micro.
+├── 🔨 Created function attn_probe.
+├── 🔨 Created function trace.
+├── 🔨 Created function layout.
+├── 🔨 Created function trace_prefill.
+├── 🔨 Created function accept_study.
+├── 🔨 Created function quant_probe.
+├── 🔨 Created function utilisation.
+├── 🔨 Created function fp8_probe.
+├── 🔨 Created function fp8_isolate.
+├── 🔨 Created function compiler_probe.
+├── 🔨 Created function cuda_probe.
+├── 🔨 Created function mlp_probe.
+├── 🔨 Created function coop_probe.
+├── 🔨 Created function qkv_probe.
+├── 🔨 Created function fp8_mma.
+├── 🔨 Created function variants.
+├── 🔨 Created function kv_checks.
+├── 🔨 Created function coal_probe.
+├── 🔨 Created function share_probe.
+├── 🔨 Created function triton_abi_probe.
+├── 🔨 Created function pdl_checks.
+├── 🔨 Created function triton_pdl_probe.
+├── 🔨 Created function pdl_diag.
+├── 🔨 Created function pdl_probe.
+├── 🔨 Created function int4_probe.
+├── 🔨 Created function tiled_probe.
+├── 🔨 Created function gemm_bisect.
+├── 🔨 Created function latency_probe.
+└── 🔨 Created function fused_probe.
+NVIDIA H100 80GB HBM3  79 GiB  132 SMs  torch 2.5.1+cu124
+GPU separate decode norm: 48 bit-exact cases passed
+GPU partial SwiGLU: 40 bit-exact cases passed
+GPU Q/K/V fusion: bit-exact against separate Triton kernels on all 6 cases
+GPU attention: 54 causal/boundary cases passed; max SDPA error=0.00390625
+GPU INT8 cache: 75 cases passed; max attention error vs dequantised SDPA 0.00391
+GPU FP8: 20 indexing/reduction cases passed; max relative error=0.00298
+GPU FP8 mma: 456 cases within tolerance; fused plane consumers bit-exact
+GPU fused add-norm: 60 cases; worst relative difference vs planes path 1.06e-03
+GPU CUDA small kernels: 88 cases passed; worst difference 1 bf16 ulp
+GPU Triton programmatic launch: 20 tensors bit-exact
+
+PAIRED BENCHMARK: public-0 / baseline / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  33%|███▎      | 1/3 [00:01<00:02,  1.10s/it]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:02<00:01,  1.25s/it]
+[1ALoading checkpoint shards: 100%|██████████| 3/3 [00:02<00:00,  1.20it/s]
+engine: warmup quantise 1.6s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.98 TB/s (3.85 effective)
+engine: down     (2560, 9728) -> cublas 1.98 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.77 TB/s (5.38 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.12x vs split
+engine: warmup projection race 4.4s
+engine: warmup compile and capture 0.9s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 13.4s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.75 TB/s (3.39 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.66 TB/s (3.21 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.53 TB/s (4.90 effective)
+engine: down     (2560, 9728) -> fp8 2.27 TB/s (4.40 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.88 TB/s (5.58 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.11x vs split
+engine: warmup projection race 7.0s
+engine: warmup compile and capture 0.6s
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: warmup short verifier 2.4s
+
+public-0  b1 x 512->32  [pass]
+  tok/s           362.6   native     38.2   speedup 9.50x
+  ttft ratio      0.393   tpot ratio 0.095   (gate 1.1)
+  spread          0.063   (gate 0.25)
+  peak mem        0.256   (gate 0.9)
+  tie gap        0.1250   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 362.6 tok/s   (all pass)
+
+geometric mean over 1 shapes: 362.6 tok/s   (all pass)
+
+PAIRED BENCHMARK: public-0 / candidate / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 14.72it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 21.48it/s]
+engine: warmup quantise 1.7s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 2.00 TB/s (3.87 effective)
+engine: down     (2560, 9728) -> cublas 1.99 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.77 TB/s (5.37 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.4s
+engine: warmup compile and capture 0.2s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 9.1s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.74 TB/s (3.38 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.65 TB/s (3.19 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.54 TB/s (4.92 effective)
+engine: down     (2560, 9728) -> fp8 2.25 TB/s (4.37 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.88 TB/s (5.59 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.11x vs split
+engine: warmup projection race 6.8s
+engine: warmup prefill MLP race 0.0s
+engine: output graph race b1 (8, 16, 1, 1, 2) -> (4, 8, 1, 1, 0); 2.5378 -> 2.4975 ms
+engine: warmup compile and capture 2.4s
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.11x vs split
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: warmup short verifier 1.7s
+
+public-0  b1 x 512->32  [pass]
+  tok/s           368.9   native     39.7   speedup 9.29x
+  ttft ratio      0.395   tpot ratio 0.097   (gate 1.1)
+  spread          0.073   (gate 0.25)
+  peak mem        0.256   (gate 0.9)
+  tie gap        0.0625   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 368.9 tok/s   (all pass)
+
+geometric mean over 1 shapes: 368.9 tok/s   (all pass)
+
+PAIRED BENCHMARK: public-1 / candidate / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 15.83it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 23.11it/s]
+engine: warmup quantise 1.5s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.99 TB/s (3.85 effective)
+engine: down     (2560, 9728) -> cublas 1.98 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.77 TB/s (5.37 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.0s
+engine: warmup compile and capture 0.2s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 8.6s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.72 TB/s (3.33 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.56 TB/s (3.02 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.48 TB/s (4.81 effective)
+engine: down     (2560, 9728) -> fp8 2.21 TB/s (4.28 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.75 TB/s (5.33 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.14x vs split
+engine: warmup projection race 6.1s
+engine: prefill MLP rows=8192 fused_stages=4 micro=1.105x
+engine: warmup prefill MLP race 2.2s
+engine: output graph race b4 (8, 16, 1, 1, 2) -> (4, 8, 1, 1, 0); 2.9158 -> 2.8650 ms
+engine: warmup compile and capture 3.2s
+
+public-1  b4 x 2048->32  [pass]
+  tok/s           625.3   native    122.3   speedup 5.11x
+  ttft ratio      0.562   tpot ratio 0.110   (gate 1.1)
+  spread          0.012   (gate 0.25)
+  peak mem        0.277   (gate 0.9)
+  tie gap        0.2500   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 625.3 tok/s   (all pass)
+
+geometric mean over 1 shapes: 625.3 tok/s   (all pass)
+
+PAIRED BENCHMARK: public-1 / baseline / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 16.13it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 23.44it/s]
+engine: warmup quantise 1.7s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.98 TB/s (3.85 effective)
+engine: down     (2560, 9728) -> cublas 1.97 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.77 TB/s (5.37 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.3s
+engine: warmup compile and capture 0.3s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 8.7s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.71 TB/s (3.32 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.51 TB/s (2.93 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.48 TB/s (4.81 effective)
+engine: down     (2560, 9728) -> fp8 2.22 TB/s (4.30 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.74 TB/s (5.31 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.14x vs split
+engine: warmup projection race 6.6s
+engine: warmup compile and capture 0.4s
+
+public-1  b4 x 2048->32  [pass]
+  tok/s           614.6   native    123.4   speedup 4.98x
+  ttft ratio      0.574   tpot ratio 0.112   (gate 1.1)
+  spread          0.012   (gate 0.25)
+  peak mem        0.256   (gate 0.9)
+  tie gap        0.1250   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 614.6 tok/s   (all pass)
+
+geometric mean over 1 shapes: 614.6 tok/s   (all pass)
+
+PAIRED BENCHMARK: public-2 / baseline / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 37.08it/s]
+engine: warmup quantise 1.6s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.99 TB/s (3.87 effective)
+engine: down     (2560, 9728) -> cublas 1.98 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.78 TB/s (5.39 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.12x vs split
+engine: warmup projection race 4.3s
+engine: warmup compile and capture 0.2s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 8.8s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.44 TB/s (2.78 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.27 TB/s (2.45 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 1.94 TB/s (3.77 effective)
+engine: down     (2560, 9728) -> fp8 1.77 TB/s (3.44 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.38 TB/s (4.62 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.13x vs split
+engine: gate_up  native INT8=False 1.00x vs incumbent
+engine: warmup projection race 9.6s
+engine: warmup compile and capture 0.7s
+
+public-2  b16 x 512->128  [pass]
+  tok/s          3851.8   native    561.5   speedup 6.86x
+  ttft ratio      0.550   tpot ratio 0.124   (gate 1.1)
+  spread          0.012   (gate 0.25)
+  peak mem        0.256   (gate 0.9)
+  tie gap        1.3750   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 3851.8 tok/s   (all pass)
+
+geometric mean over 1 shapes: 3851.8 tok/s   (all pass)
+
+PAIRED BENCHMARK: public-2 / candidate / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 15.95it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 23.39it/s]
+engine: warmup quantise 1.7s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.99 TB/s (3.87 effective)
+engine: down     (2560, 9728) -> cublas 1.99 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.75 TB/s (5.33 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.2s
+engine: warmup compile and capture 0.2s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 8.8s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.43 TB/s (2.78 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.27 TB/s (2.46 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 1.94 TB/s (3.76 effective)
+engine: down     (2560, 9728) -> fp8 1.77 TB/s (3.44 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.39 TB/s (4.63 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.14x vs split
+engine: gate_up  native INT8=False 1.00x vs incumbent
+engine: warmup projection race 9.3s
+engine: prefill MLP rows=8192 fused_stages=4 micro=1.102x
+engine: warmup prefill MLP race 0.6s
+engine: output graph race b16 (8, 16, 1, 1, 2) -> (4, 8, 1, 1, 0); 3.2624 -> 3.2081 ms
+engine: warmup compile and capture 2.9s
+
+public-2  b16 x 512->128  [pass]
+  tok/s          3910.7   native    564.9   speedup 6.92x
+  ttft ratio      0.534   tpot ratio 0.123   (gate 1.1)
+  spread          0.011   (gate 0.25)
+  peak mem        0.302   (gate 0.9)
+  tie gap        1.3750   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 3910.7 tok/s   (all pass)
+
+geometric mean over 1 shapes: 3910.7 tok/s   (all pass)
+
+PAIRED BENCHMARK: coverage-long / candidate / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 16.60it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 24.26it/s]
+engine: warmup quantise 1.5s
+engine: qkv      (6144, 2560) -> cublas 2.09 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.99 TB/s (3.86 effective)
+engine: down     (2560, 9728) -> cublas 1.98 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.75 TB/s (5.33 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.2s
+engine: warmup compile and capture 0.2s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 8.8s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.74 TB/s (3.38 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.66 TB/s (3.21 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.54 TB/s (4.92 effective)
+engine: down     (2560, 9728) -> fp8 2.26 TB/s (4.39 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.87 TB/s (5.57 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.11x vs split
+engine: warmup projection race 5.9s
+engine: prefill MLP rows=4096 fused_stages=4 micro=1.108x
+engine: warmup prefill MLP race 2.0s
+engine: output graph race b1 (8, 16, 1, 1, 2) -> (8, 8, 1, 1, 2); 2.7064 -> 2.6753 ms
+engine: warmup compile and capture 2.8s
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.13x vs split
+engine: warmup short verifier 2.6s
+
+coverage-long  b1 x 4096->65  [pass]
+  tok/s           283.0   native     37.6   speedup 7.53x
+  ttft ratio      0.586   tpot ratio 0.102   (gate 1.1)
+  spread          0.060   (gate 0.25)
+  peak mem        0.262   (gate 0.9)
+  tie gap        0.1250   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 283.0 tok/s   (all pass)
+
+geometric mean over 1 shapes: 283.0 tok/s   (all pass)
+
+PAIRED BENCHMARK: coverage-long / baseline / FP8=on short=2
+corpus: 175904 tokens
+
+[1ALoading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+[1ALoading checkpoint shards:  67%|██████▋   | 2/3 [00:00<00:00, 15.28it/s]Loading checkpoint shards: 100%|██████████| 3/3 [00:00<00:00, 22.42it/s]
+engine: warmup quantise 1.7s
+engine: qkv      (6144, 2560) -> cublas 2.08 TB/s
+engine: o        (2560, 4096) -> cublas 1.57 TB/s
+engine: gate_up  (19456, 2560) -> fp8 1.98 TB/s (3.84 effective)
+engine: down     (2560, 9728) -> cublas 1.98 TB/s
+engine: lm_head  (151936, 2560) -> fp8 2.75 TB/s (5.34 effective)
+engine: mlp      fused=(4, 1, 1, 1, 2) (fp8)  1.11x vs split
+engine: warmup projection race 4.4s
+engine: warmup compile and capture 0.3s
+engine: self-check logit delta 0.7500, worst tie gap 0.0000, tokens match, triton True, graph True
+load + self-check: 9.1s
+fast path live: True
+engine: qkv      (6144, 2560) -> fp8 1.73 TB/s (3.36 effective) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 1.65 TB/s (3.20 effective) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 2.53 TB/s (4.91 effective)
+engine: down     (2560, 9728) -> fp8 2.26 TB/s (4.39 effective) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 2.90 TB/s (5.62 effective)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.11x vs split
+engine: warmup projection race 7.5s
+engine: warmup compile and capture 0.2s
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: qkv      (6144, 2560) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: o        (2560, 4096) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: gate_up  (19456, 2560) -> fp8 (ordinary decode's choice)
+engine: down     (2560, 9728) -> fp8 (ordinary decode's choice) (planes into the consumer)
+engine: lm_head  (151936, 2560) -> fp8 (ordinary decode's choice)
+engine: mlp      fused=('planes', (8, 4, 1, 1, 2)) (fp8)  1.12x vs split
+engine: warmup short verifier 1.5s
+
+coverage-long  b1 x 4096->65  [pass]
+  tok/s           281.8   native     37.5   speedup 7.52x
+  ttft ratio      0.600   tpot ratio 0.101   (gate 1.1)
+  spread          0.130   (gate 0.25)
+  peak mem        0.256   (gate 0.9)
+  tie gap        0.1250   (margin 2.0)   argmax exact False
+
+geometric mean over 1 shapes: 281.8 tok/s   (all pass)
+
+geometric mean over 1 shapes: 281.8 tok/s   (all pass)
+public-0: 362.6 -> 368.9 tok/s (1.017x), all checks pass: True
+public-1: 614.6 -> 625.3 tok/s (1.017x), all checks pass: True
+public-2: 3851.8 -> 3910.7 tok/s (1.015x), all checks pass: True
+coverage-long: 281.8 -> 283.0 tok/s (1.004x), all checks pass: True
+Results saved to bench/results/mlp-decode-fresh-paired-20260920.json
+Stopping app - local entrypoint completed.
+✓ App completed. View run at 
+https://modal.com/apps/macrochen05/main/ap-9S2U6F1YhyLEW5GUEKFBhj

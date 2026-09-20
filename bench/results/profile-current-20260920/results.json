@@ -1,0 +1,1425 @@
+[
+  {
+    "name": "public-0",
+    "batch": 1,
+    "context": 512,
+    "output": 32,
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "torch": "2.5.1+cu124",
+    "load_warmup_ms": 27567.769227999997,
+    "peak_allocated_bytes_before_replay": 21724398080,
+    "environment_overrides": {},
+    "families": {
+      "qkv": "fp8",
+      "o": "fp8",
+      "gate_up": "fp8",
+      "down": "fp8",
+      "lm_head": "fp8"
+    },
+    "integer_mlp": false,
+    "partial_configs": {
+      "qkv": [
+        8,
+        4,
+        1,
+        1,
+        0
+      ],
+      "o": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ],
+      "down": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ]
+    },
+    "matmuls": {
+      "qkv": "functools.partial(<function matmul at 0x2ad6ee690a40>, config=(8, 4, 1, 1, 0))",
+      "o": "functools.partial(<function matmul at 0x2ad6ee690a40>, config=(8, 16, 1, 1, 2))",
+      "gate_up": "functools.partial(<function matmul at 0x2ad6ee690a40>, config=(8, 4, 1, 1, 2))",
+      "down": "functools.partial(<function matmul at 0x2ad6ee690a40>, config=(8, 16, 1, 1, 2))",
+      "lm_head": "functools.partial(<function matmul at 0x2ad6ee690a40>, config=(8, 2, 1, 1, 0))"
+    },
+    "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2ad942149080>",
+    "attention": {
+      "splits": 4,
+      "block_n": 64,
+      "warps": 4
+    },
+    "fixed_decode_position": 512,
+    "samples": [
+      {
+        "ttft_ms": 9.736870000004672,
+        "total_ms": 90.1200680000045,
+        "tpot_ms": 2.5930063870967683,
+        "tok_s": 355.08184481172833,
+        "speculation": {
+          "ordinary_passes": 29,
+          "verify_passes": 2,
+          "accepted": 0,
+          "proposed": 4,
+          "outputs": 32
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 9.796895999997446,
+        "total_ms": 80.61609300000327,
+        "tpot_ms": 2.2844902258066395,
+        "tok_s": 396.9430768618209,
+        "speculation": {
+          "ordinary_passes": 20,
+          "verify_passes": 7,
+          "accepted": 4,
+          "proposed": 14,
+          "outputs": 32
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 9.906267999994611,
+        "total_ms": 85.68834899999445,
+        "tpot_ms": 2.444583258064511,
+        "tok_s": 373.44633632749856,
+        "speculation": {
+          "ordinary_passes": 23,
+          "verify_passes": 6,
+          "accepted": 2,
+          "proposed": 12,
+          "outputs": 32
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 9.874287999998899,
+        "total_ms": 90.88941200000278,
+        "tpot_ms": 2.613391096774319,
+        "tok_s": 352.0762132337155,
+        "speculation": {
+          "ordinary_passes": 25,
+          "verify_passes": 6,
+          "accepted": 0,
+          "proposed": 12,
+          "outputs": 32
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 9.883965999996747,
+        "total_ms": 91.13344899999731,
+        "tpot_ms": 2.6209510645161473,
+        "tok_s": 351.13342412840035,
+        "speculation": {
+          "ordinary_passes": 22,
+          "verify_passes": 9,
+          "accepted": 0,
+          "proposed": 18,
+          "outputs": 32
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      }
+    ],
+    "prefill_wall": {
+      "median_ms": 9.454943999998022,
+      "samples_ms": [
+        9.505457000003048,
+        9.45219700000166,
+        9.495148000006282,
+        9.454943999998022,
+        9.48917600000243,
+        9.452093000000161,
+        9.45085500000431,
+        9.420056999999815,
+        9.492565999998703
+      ]
+    },
+    "decode_wall": {
+      "median_ms": 2.53575789999978,
+      "samples_ms": [
+        2.5748017499999776,
+        2.564800999999761,
+        2.5500099500000317,
+        2.542606749999976,
+        2.53575789999978,
+        2.533854099999999,
+        2.535692350000218,
+        2.53377179999994,
+        2.5327165000000207
+      ]
+    },
+    "prefill_trace": {
+      "kernels": [
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 143.99999999999972,
+          "ms": 6.896179666666671
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "calls": 35.99999999999998,
+          "ms": 0.7739313333333336
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 35.99999999999998,
+          "ms": 0.3103746666666666
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "calls": 72.00000000000006,
+          "ms": 0.2978793333333335
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 35.99999999999998,
+          "ms": 0.2688873333333333
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 1.0,
+          "ms": 0.2537146666666667
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0,
+          "ms": 0.010056666666666667
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0,
+          "ms": 0.009564
+        },
+        {
+          "name": "_rms_norm_kernel",
+          "calls": 1.0,
+          "ms": 0.0026853333333333334
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<int>, at::detail::Array<char*, 1>)",
+          "calls": 1.0,
+          "ms": 0.0010163333333333333
+        }
+      ],
+      "summed_kernel_ms": 8.82428933333334,
+      "kernel_union_ms": 8.824284179687501,
+      "projection_gpu_ms": {
+        "qkv": 1.085576000000001,
+        "o": 0.94849733333333,
+        "gate_up": 2.971693666666664,
+        "down": 1.9168399999999959,
+        "lm_head": 0.25444200000000033
+      }
+    },
+    "decode_trace": {
+      "kernels": [
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_g2_t",
+          "calls": 107.999999999996,
+          "ms": 2.0200879999999986
+        },
+        {
+          "name": "rms_norm",
+          "calls": 72.999999999998,
+          "ms": 0.8367513000000004
+        },
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_t",
+          "calls": 37.000000000000036,
+          "ms": 0.8293793000000005
+        },
+        {
+          "name": "residual_partials",
+          "calls": 71.99999999999805,
+          "ms": 0.8241760999999996
+        },
+        {
+          "name": "partial_swiglu",
+          "calls": 36.00000000000009,
+          "ms": 0.36287944999999977
+        },
+        {
+          "name": "_split_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.19312910000000028
+        },
+        {
+          "name": "_qkv_planes_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.13059294999999987
+        },
+        {
+          "name": "_merge_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.06026389999999983
+        },
+        {
+          "name": "reduce_partials",
+          "calls": 1.0000000000000002,
+          "ms": 0.012289399999999999
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0079565
+        },
+        {
+          "name": "memcpy32_post",
+          "calls": 3.999999999999994,
+          "ms": 0.0046974999999999986
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<long>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<long>, at::detail::Array<char*, 1>)",
+          "calls": 2.000000000000001,
+          "ms": 0.0019727000000000004
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFloat16, long, unsigned int, 2, 2, -2>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, long)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0019632
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2> >(int, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0012671499999999997
+        }
+      ],
+      "summed_kernel_ms": 5.287406549999999,
+      "kernel_union_ms": 2.49977470703125,
+      "projection_gpu_ms": {}
+    }
+  },
+  {
+    "name": "public-1",
+    "batch": 4,
+    "context": 2048,
+    "output": 32,
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "torch": "2.5.1+cu124",
+    "load_warmup_ms": 14439.450676,
+    "peak_allocated_bytes_before_replay": 21724398080,
+    "environment_overrides": {},
+    "families": {
+      "qkv": "fp8",
+      "o": "fp8",
+      "gate_up": "fp8",
+      "down": "fp8",
+      "lm_head": "fp8"
+    },
+    "integer_mlp": false,
+    "partial_configs": {
+      "qkv": [
+        8,
+        4,
+        1,
+        1,
+        0
+      ],
+      "o": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ],
+      "down": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ]
+    },
+    "matmuls": {
+      "qkv": "functools.partial(<function matmul at 0x2b665b8c4f40>, config=(8, 4, 1, 1, 0))",
+      "o": "functools.partial(<function matmul at 0x2b665b8c4f40>, config=(8, 16, 1, 1, 2))",
+      "gate_up": "functools.partial(<function matmul at 0x2b665b8c4f40>, config=(8, 4, 1, 1, 2))",
+      "down": "functools.partial(<function matmul at 0x2b665b8c4f40>, config=(8, 16, 1, 1, 2))",
+      "lm_head": "functools.partial(<function matmul at 0x2b665b8c4f40>, config=(8, 1, 1, 1, 0))"
+    },
+    "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2b68af4120c0>",
+    "attention": {
+      "splits": 4,
+      "block_n": 64,
+      "warps": 4
+    },
+    "fixed_decode_position": 2048,
+    "samples": [
+      {
+        "ttft_ms": 114.17606999999919,
+        "total_ms": 209.21906699999937,
+        "tpot_ms": 3.065903129032264,
+        "tok_s": 611.7989236611995,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 116.09983000000312,
+        "total_ms": 211.19302900000037,
+        "tpot_ms": 3.0675225483870077,
+        "tok_s": 606.0806107383391,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 115.25645399999718,
+        "total_ms": 210.11985999999894,
+        "tpot_ms": 3.0601098709677985,
+        "tok_s": 609.1761150040775,
+        "speculation": null,
+        "tie_gap": 0.0,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 116.892,
+        "total_ms": 210.7007689999989,
+        "tpot_ms": 3.0260893225806096,
+        "tok_s": 607.4965962748844,
+        "speculation": null,
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 115.67208899999315,
+        "total_ms": 209.28320499999842,
+        "tpot_ms": 3.019713419355009,
+        "tok_s": 611.6114286380551,
+        "speculation": null,
+        "tie_gap": 0.0,
+        "argmax_exact": false,
+        "replay_pass": true
+      }
+    ],
+    "prefill_wall": {
+      "median_ms": 121.04779800000642,
+      "samples_ms": [
+        121.04779800000642,
+        120.85152100000585,
+        124.28925700000093,
+        122.95492500000194,
+        130.0502809999955,
+        120.79966000000297,
+        121.00789100000497,
+        121.3216920000022,
+        120.40058600000236
+      ]
+    },
+    "decode_wall": {
+      "median_ms": 2.922469649999826,
+      "samples_ms": [
+        2.9469568500001486,
+        2.942874600000067,
+        2.937219000000013,
+        2.9354581500001586,
+        2.922469649999826,
+        2.920288550000194,
+        2.921799300000316,
+        2.9211738999997294,
+        2.9208216999997205
+      ]
+    },
+    "prefill_trace": {
+      "kernels": [
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 143.99999999999972,
+          "ms": 83.88442266666667
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "calls": 35.99999999999998,
+          "ms": 20.000489666666674
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 35.99999999999998,
+          "ms": 5.736028666666666
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "calls": 72.00000000000006,
+          "ms": 3.8412266666666666
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 35.99999999999998,
+          "ms": 3.6063666666666663
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 1.0,
+          "ms": 0.26712633333333335
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0,
+          "ms": 0.13597299999999998
+        },
+        {
+          "name": "_rms_norm_kernel",
+          "calls": 1.0,
+          "ms": 0.03891033333333333
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0,
+          "ms": 0.010911666666666667
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<int>, at::detail::Array<char*, 1>)",
+          "calls": 1.0,
+          "ms": 0.0010776666666666667
+        }
+      ],
+      "summed_kernel_ms": 117.52253333333336,
+      "kernel_union_ms": 117.52253450520834,
+      "projection_gpu_ms": {
+        "qkv": 12.875598666666614,
+        "o": 9.1149463333334,
+        "gate_up": 41.93293599999998,
+        "down": 20.430673666666657,
+        "lm_head": 0.2698246666666722
+      }
+    },
+    "decode_trace": {
+      "kernels": [
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_g2_t",
+          "calls": 107.999999999996,
+          "ms": 2.0076799999999984
+        },
+        {
+          "name": "residual_partials",
+          "calls": 71.99999999999805,
+          "ms": 0.7646782500000002
+        },
+        {
+          "name": "rms_norm",
+          "calls": 72.999999999998,
+          "ms": 0.7635224500000002
+        },
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_t",
+          "calls": 36.00000000000009,
+          "ms": 0.5785127000000007
+        },
+        {
+          "name": "_split_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.5573915999999997
+        },
+        {
+          "name": "partial_swiglu",
+          "calls": 36.00000000000009,
+          "ms": 0.36293065000000013
+        },
+        {
+          "name": "fp8_mma_w8_n1_m0_s1_r1_t",
+          "calls": 1.0000000000000002,
+          "ms": 0.1498491
+        },
+        {
+          "name": "_qkv_planes_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.12476365000000017
+        },
+        {
+          "name": "_merge_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.06238494999999995
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.009226050000000001
+        },
+        {
+          "name": "memcpy32_post",
+          "calls": 3.999999999999994,
+          "ms": 0.004380999999999999
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFloat16, long, unsigned int, 2, 2, -2>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, long)",
+          "calls": 1.0000000000000002,
+          "ms": 0.004235549999999999
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<long>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<long>, at::detail::Array<char*, 1>)",
+          "calls": 2.000000000000001,
+          "ms": 0.0019713000000000005
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2> >(int, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0011998999999999998
+        }
+      ],
+      "summed_kernel_ms": 5.392727149999999,
+      "kernel_union_ms": 2.889018017578125,
+      "projection_gpu_ms": {}
+    }
+  },
+  {
+    "name": "public-2",
+    "batch": 16,
+    "context": 512,
+    "output": 128,
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "torch": "2.5.1+cu124",
+    "load_warmup_ms": 19500.95037,
+    "peak_allocated_bytes_before_replay": 21724398080,
+    "environment_overrides": {},
+    "families": {
+      "qkv": "fp8",
+      "o": "fp8",
+      "gate_up": "fp8",
+      "down": "fp8",
+      "lm_head": "fp8"
+    },
+    "integer_mlp": false,
+    "partial_configs": {
+      "qkv": [
+        4,
+        4,
+        1,
+        1,
+        0
+      ],
+      "o": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ],
+      "down": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ]
+    },
+    "matmuls": {
+      "qkv": "functools.partial(<function matmul at 0x2b20f36c4f40>, config=(4, 4, 1, 1, 0))",
+      "o": "functools.partial(<function matmul at 0x2b20f36c4f40>, config=(8, 16, 1, 1, 2))",
+      "gate_up": "functools.partial(<function matmul at 0x2b20f36c4f40>, config=(8, 4, 1, 1, 2))",
+      "down": "functools.partial(<function matmul at 0x2b20f36c4f40>, config=(8, 16, 1, 1, 2))",
+      "lm_head": "functools.partial(<function matmul at 0x2b20f36c4f40>, config=(8, 2, 1, 1, 2))"
+    },
+    "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2b234708a980>",
+    "attention": {
+      "splits": 1,
+      "block_n": 64,
+      "warps": 4
+    },
+    "fixed_decode_position": 512,
+    "samples": [
+      {
+        "ttft_ms": 103.10617899999386,
+        "total_ms": 534.5228749999933,
+        "tpot_ms": 3.3969818582677123,
+        "tok_s": 3831.454360115132,
+        "speculation": null,
+        "tie_gap": 2.0,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 103.70879500000285,
+        "total_ms": 533.2634439999993,
+        "tpot_ms": 3.3823200708661134,
+        "tok_s": 3840.503269149653,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 104.70589400000563,
+        "total_ms": 532.794980999995,
+        "tpot_ms": 3.3707802125983415,
+        "tok_s": 3843.88005336713,
+        "speculation": null,
+        "tie_gap": 0.375,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 103.18322400000568,
+        "total_ms": 532.4563540000042,
+        "tpot_ms": 3.3801033858267604,
+        "tok_s": 3846.3246510529643,
+        "speculation": null,
+        "tie_gap": 0.5,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 103.78168600000492,
+        "total_ms": 536.7280590000121,
+        "tpot_ms": 3.4090265590551745,
+        "tok_s": 3815.71256739524,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      }
+    ],
+    "prefill_wall": {
+      "median_ms": 109.47494199999142,
+      "samples_ms": [
+        109.47494199999142,
+        109.26459300000602,
+        109.34639200000618,
+        112.57759400000111,
+        122.53527400000053,
+        114.53606700000307,
+        112.02061800000251,
+        107.74391799999705,
+        108.5892340000072
+      ]
+    },
+    "decode_wall": {
+      "median_ms": 3.2771935499994242,
+      "samples_ms": [
+        3.3441085500001577,
+        3.3157099499995013,
+        3.300719700000343,
+        3.287203600000055,
+        3.2753580499999657,
+        3.275433000000305,
+        3.2771935499994242,
+        3.277189700000349,
+        3.2757043000003705
+      ]
+    },
+    "prefill_trace": {
+      "kernels": [
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 143.99999999999972,
+          "ms": 84.43634700000004
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "calls": 35.99999999999998,
+          "ms": 7.600688666666666
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 35.99999999999998,
+          "ms": 5.750740666666669
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "calls": 72.00000000000006,
+          "ms": 3.843576000000001
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 35.99999999999998,
+          "ms": 3.5768136666666677
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 1.0,
+          "ms": 0.2683836666666667
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0,
+          "ms": 0.13573333333333332
+        },
+        {
+          "name": "_rms_norm_kernel",
+          "calls": 1.0,
+          "ms": 0.03838933333333333
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0,
+          "ms": 0.013237333333333334
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<int>, at::detail::Array<char*, 1>)",
+          "calls": 1.0,
+          "ms": 0.0010773333333333334
+        }
+      ],
+      "summed_kernel_ms": 105.66498700000004,
+      "kernel_union_ms": 105.66498567708334,
+      "projection_gpu_ms": {
+        "qkv": 12.976080333333327,
+        "o": 9.055352333333376,
+        "gate_up": 42.281062333333374,
+        "down": 20.594901666666768,
+        "lm_head": 0.2712636666666561
+      }
+    },
+    "decode_trace": {
+      "kernels": [
+        {
+          "name": "fp8_mma_w8_n2_m1_s1_r1_g2_t",
+          "calls": 108.99999999999595,
+          "ms": 2.1232120500000025
+        },
+        {
+          "name": "residual_partials",
+          "calls": 71.99999999999805,
+          "ms": 0.8658583499999999
+        },
+        {
+          "name": "rms_norm",
+          "calls": 72.999999999998,
+          "ms": 0.851668650000001
+        },
+        {
+          "name": "fp8_mma_w4_n2_m1_s1_r1_t",
+          "calls": 36.00000000000009,
+          "ms": 0.7749446499999995
+        },
+        {
+          "name": "_split_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.6026012500000002
+        },
+        {
+          "name": "partial_swiglu",
+          "calls": 36.00000000000009,
+          "ms": 0.4688445000000002
+        },
+        {
+          "name": "_qkv_planes_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.12979995
+        },
+        {
+          "name": "reduce_partials",
+          "calls": 1.0000000000000002,
+          "ms": 0.02933625
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFloat16, long, unsigned int, 2, 2, -2>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, long)",
+          "calls": 1.0000000000000002,
+          "ms": 0.012051299999999997
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.010716900000000003
+        },
+        {
+          "name": "memcpy32_post",
+          "calls": 3.999999999999994,
+          "ms": 0.004531049999999998
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<long>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<long>, at::detail::Array<char*, 1>)",
+          "calls": 2.000000000000001,
+          "ms": 0.00197915
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2> >(int, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.00120945
+        }
+      ],
+      "summed_kernel_ms": 5.876753500000004,
+      "kernel_union_ms": 3.2447865722656255,
+      "projection_gpu_ms": {}
+    }
+  },
+  {
+    "name": "wide",
+    "batch": 32,
+    "context": 256,
+    "output": 32,
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "torch": "2.5.1+cu124",
+    "load_warmup_ms": 28395.279880000006,
+    "peak_allocated_bytes_before_replay": 22412484608,
+    "environment_overrides": {},
+    "families": {
+      "qkv": "bf16",
+      "o": "fp8",
+      "gate_up": "bf16",
+      "down": "fp8",
+      "lm_head": "fp8"
+    },
+    "integer_mlp": false,
+    "partial_configs": {
+      "o": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ],
+      "down": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ]
+    },
+    "matmuls": {
+      "qkv": "<built-in function linear>",
+      "o": "functools.partial(<function matmul at 0x2ba7421ccf40>, config=(8, 16, 1, 1, 2))",
+      "gate_up": "functools.partial(<function skinny_matmul at 0x2ba7421ce160>, config=(32, 128, 4, 1))",
+      "down": "functools.partial(<function matmul at 0x2ba7421ccf40>, config=(8, 16, 1, 1, 2))",
+      "lm_head": "functools.partial(<function matmul at 0x2ba7421ccf40>, config=(8, 2, 1, 1, 2))"
+    },
+    "fused_mlp": "None",
+    "attention": {
+      "splits": 1,
+      "block_n": 64,
+      "warps": 4
+    },
+    "fixed_decode_position": 256,
+    "samples": [
+      {
+        "ttft_ms": 101.54711399999883,
+        "total_ms": 248.20899099998428,
+        "tpot_ms": 4.7310282903221115,
+        "tok_s": 4125.555629046753,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 102.25344500000233,
+        "total_ms": 249.71938299998442,
+        "tpot_ms": 4.7569657419349065,
+        "tok_s": 4100.602795418824,
+        "speculation": null,
+        "tie_gap": 0.25,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 102.14117999998962,
+        "total_ms": 249.4872629999918,
+        "tpot_ms": 4.753099451612973,
+        "tok_s": 4104.4179477813,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 101.41172600000914,
+        "total_ms": 248.50701500000127,
+        "tpot_ms": 4.745009322580391,
+        "tok_s": 4120.608023882121,
+        "speculation": null,
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 103.36423999999056,
+        "total_ms": 249.97452899998507,
+        "tpot_ms": 4.729364161290145,
+        "tok_s": 4096.417359386488,
+        "speculation": null,
+        "tie_gap": 0.25,
+        "argmax_exact": false,
+        "replay_pass": true
+      }
+    ],
+    "prefill_wall": {
+      "median_ms": 109.53478799999061,
+      "samples_ms": [
+        106.4403029999994,
+        106.44898099999978,
+        109.69375100000889,
+        109.56406299999344,
+        116.64127599999574,
+        111.81475600000113,
+        107.85737500000891,
+        109.53478799999061,
+        107.28080600000567
+      ]
+    },
+    "decode_wall": {
+      "median_ms": 4.548728599999663,
+      "samples_ms": [
+        4.601562750001165,
+        4.570263000000807,
+        4.549659000001327,
+        4.549575800000127,
+        4.548257650000664,
+        4.548728599999663,
+        4.548701449999726,
+        4.548591549999514,
+        4.547059799999431
+      ]
+    },
+    "prefill_trace": {
+      "kernels": [
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 144.99999999999974,
+          "ms": 84.63294633333338
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 35.99999999999998,
+          "ms": 5.702603333333337
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "calls": 35.99999999999998,
+          "ms": 5.544957666666667
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "calls": 72.00000000000006,
+          "ms": 3.8512003333333316
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 35.99999999999998,
+          "ms": 3.568818999999999
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0,
+          "ms": 0.13924066666666668
+        },
+        {
+          "name": "_rms_norm_kernel",
+          "calls": 1.0,
+          "ms": 0.039583
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0,
+          "ms": 0.019754333333333332
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<int>, at::detail::Array<char*, 1>)",
+          "calls": 1.0,
+          "ms": 0.001077
+        }
+      ],
+      "summed_kernel_ms": 103.50018166666673,
+      "kernel_union_ms": 103.50017936197916,
+      "projection_gpu_ms": {
+        "qkv": 12.962404666666687,
+        "o": 9.007365333333343,
+        "gate_up": 42.24950033333332,
+        "down": 20.58895199999997,
+        "lm_head": 0.29108833333332346
+      }
+    },
+    "decode_trace": {
+      "kernels": [
+        {
+          "name": "fp8_mma_w8_n4_m1_s1_r1_g2_t",
+          "calls": 72.999999999998,
+          "ms": 1.4218600000000021
+        },
+        {
+          "name": "_skinny_kernel",
+          "calls": 36.00000000000009,
+          "ms": 1.3760898000000001
+        },
+        {
+          "name": "residual_partials",
+          "calls": 71.99999999999805,
+          "ms": 0.701408300000001
+        },
+        {
+          "name": "rms_norm",
+          "calls": 72.999999999998,
+          "ms": 0.6666254500000022
+        },
+        {
+          "name": "_split_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.6252702499999993
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x64x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 36.00000000000009,
+          "ms": 0.5765340999999999
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.11271210000000022
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.05638815000000015
+        },
+        {
+          "name": "reduce_partials",
+          "calls": 1.0000000000000002,
+          "ms": 0.04571180000000001
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.015077000000000004
+        },
+        {
+          "name": "memcpy32_post",
+          "calls": 3.999999999999994,
+          "ms": 0.004677399999999999
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0024782500000000004
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<long>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<long>, at::detail::Array<char*, 1>)",
+          "calls": 2.000000000000001,
+          "ms": 0.0019649000000000003
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2> >(int, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.00121915
+        }
+      ],
+      "summed_kernel_ms": 5.608016650000004,
+      "kernel_union_ms": 4.524106787109375,
+      "projection_gpu_ms": {}
+    }
+  },
+  {
+    "name": "long",
+    "batch": 1,
+    "context": 4096,
+    "output": 65,
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "torch": "2.5.1+cu124",
+    "load_warmup_ms": 22404.446965999996,
+    "peak_allocated_bytes_before_replay": 21724398080,
+    "environment_overrides": {},
+    "families": {
+      "qkv": "fp8",
+      "o": "fp8",
+      "gate_up": "fp8",
+      "down": "fp8",
+      "lm_head": "fp8"
+    },
+    "integer_mlp": false,
+    "partial_configs": {
+      "qkv": [
+        8,
+        4,
+        1,
+        1,
+        0
+      ],
+      "o": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ],
+      "down": [
+        8,
+        16,
+        1,
+        1,
+        2
+      ]
+    },
+    "matmuls": {
+      "qkv": "functools.partial(<function matmul at 0x2b9e44bc4f40>, config=(8, 4, 1, 1, 0))",
+      "o": "functools.partial(<function matmul at 0x2b9e44bc4f40>, config=(8, 16, 1, 1, 2))",
+      "gate_up": "functools.partial(<function matmul at 0x2b9e44bc4f40>, config=(8, 4, 1, 1, 2))",
+      "down": "functools.partial(<function matmul at 0x2b9e44bc4f40>, config=(8, 16, 1, 1, 2))",
+      "lm_head": "functools.partial(<function matmul at 0x2b9e44bc4f40>, config=(8, 2, 1, 1, 2))"
+    },
+    "fused_mlp": "<function Engine._choose_mlp.<locals>.consume_planes at 0x2ba0987420c0>",
+    "attention": {
+      "splits": 16,
+      "block_n": 64,
+      "warps": 4
+    },
+    "fixed_decode_position": 4096,
+    "samples": [
+      {
+        "ttft_ms": 67.95675099999698,
+        "total_ms": 238.57080300001599,
+        "tpot_ms": 2.665844562500297,
+        "tok_s": 272.455804241878,
+        "speculation": {
+          "ordinary_passes": 46,
+          "verify_passes": 14,
+          "accepted": 4,
+          "proposed": 27,
+          "outputs": 65
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 67.10814400000231,
+        "total_ms": 237.4975890000144,
+        "tpot_ms": 2.6623350781251887,
+        "tok_s": 273.68698888137374,
+        "speculation": {
+          "ordinary_passes": 34,
+          "verify_passes": 26,
+          "accepted": 4,
+          "proposed": 52,
+          "outputs": 65
+        },
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 68.26710300001082,
+        "total_ms": 226.88855399999852,
+        "tpot_ms": 2.478460171874808,
+        "tok_s": 286.48426222505884,
+        "speculation": {
+          "ordinary_passes": 37,
+          "verify_passes": 19,
+          "accepted": 8,
+          "proposed": 37,
+          "outputs": 65
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": false,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 67.28198100000782,
+        "total_ms": 238.09597900000767,
+        "tpot_ms": 2.6689687187499977,
+        "tok_s": 272.9991504812347,
+        "speculation": {
+          "ordinary_passes": 33,
+          "verify_passes": 27,
+          "accepted": 4,
+          "proposed": 54,
+          "outputs": 65
+        },
+        "tie_gap": 0.0,
+        "argmax_exact": true,
+        "replay_pass": true
+      },
+      {
+        "ttft_ms": 67.0295049999936,
+        "total_ms": 239.61987300000942,
+        "tpot_ms": 2.696724500000247,
+        "tok_s": 271.2629765895813,
+        "speculation": {
+          "ordinary_passes": 42,
+          "verify_passes": 19,
+          "accepted": 3,
+          "proposed": 38,
+          "outputs": 65
+        },
+        "tie_gap": 0.125,
+        "argmax_exact": false,
+        "replay_pass": true
+      }
+    ],
+    "prefill_wall": {
+      "median_ms": 71.09422400000653,
+      "samples_ms": [
+        71.03018199998701,
+        70.46040000000175,
+        71.09422400000653,
+        71.09510800000862,
+        71.15688200002523,
+        70.6268479999892,
+        71.34818299999779,
+        70.92448100002002,
+        72.3052369999948
+      ]
+    },
+    "decode_wall": {
+      "median_ms": 2.7217889999988643,
+      "samples_ms": [
+        2.7610248000002002,
+        2.7471211999994694,
+        2.739362999999173,
+        2.7269395000004693,
+        2.7217889999988643,
+        2.717670200000555,
+        2.7191691499993453,
+        2.716208249999852,
+        2.7153927999989946
+      ]
+    },
+    "prefill_trace": {
+      "kernels": [
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 143.99999999999972,
+          "ms": 41.57244600000002
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "calls": 35.99999999999998,
+          "ms": 19.494413333333327
+        },
+        {
+          "name": "_swiglu_kernel",
+          "calls": 35.99999999999998,
+          "ms": 2.839723333333333
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "calls": 72.00000000000006,
+          "ms": 1.8427873333333322
+        },
+        {
+          "name": "_qkv_kernel",
+          "calls": 35.99999999999998,
+          "ms": 1.8205310000000001
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "calls": 1.0,
+          "ms": 0.26655133333333336
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectLargeIndex<c10::BFloat16, long, unsigned int, 2, 2, -2, true>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, unsigned int, long)",
+          "calls": 1.0,
+          "ms": 0.066163
+        },
+        {
+          "name": "_rms_norm_kernel",
+          "calls": 1.0,
+          "ms": 0.015711
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0,
+          "ms": 0.009866
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<int>, at::detail::Array<char*, 1>)",
+          "calls": 1.0,
+          "ms": 0.001045
+        }
+      ],
+      "summed_kernel_ms": 67.92923733333336,
+      "kernel_union_ms": 67.92924055989583,
+      "projection_gpu_ms": {
+        "qkv": 6.400923333333348,
+        "o": 4.917314666666701,
+        "gate_up": 20.0534966666667,
+        "down": 10.667331666666676,
+        "lm_head": 0.26912166666668297
+      }
+    },
+    "decode_trace": {
+      "kernels": [
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_g2_t",
+          "calls": 108.99999999999595,
+          "ms": 2.178428900000001
+        },
+        {
+          "name": "residual_partials",
+          "calls": 71.99999999999805,
+          "ms": 0.8599211500000001
+        },
+        {
+          "name": "rms_norm",
+          "calls": 72.999999999998,
+          "ms": 0.855680149999999
+        },
+        {
+          "name": "fp8_mma_w8_n1_m1_s1_r1_t",
+          "calls": 36.00000000000009,
+          "ms": 0.6912428499999995
+        },
+        {
+          "name": "partial_swiglu",
+          "calls": 36.00000000000009,
+          "ms": 0.3633196499999997
+        },
+        {
+          "name": "_split_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.3452497999999996
+        },
+        {
+          "name": "_merge_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.16801264999999996
+        },
+        {
+          "name": "_qkv_planes_kernel",
+          "calls": 36.00000000000009,
+          "ms": 0.13334639999999975
+        },
+        {
+          "name": "reduce_partials",
+          "calls": 1.0000000000000002,
+          "ms": 0.018258499999999997
+        },
+        {
+          "name": "void at::native::reduce_kernel<512, 1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4> >(at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, 4>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.007960449999999999
+        },
+        {
+          "name": "memcpy32_post",
+          "calls": 3.999999999999994,
+          "ms": 0.004760500000000001
+        },
+        {
+          "name": "void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFloat16, long, unsigned int, 2, 2, -2>(at::cuda::detail::TensorInfo<c10::BFloat16, unsigned int>, at::cuda::detail::TensorInfo<c10::BFloat16 const, unsigned int>, at::cuda::detail::TensorInfo<long const, unsigned int>, int, int, unsigned int, long)",
+          "calls": 1.0000000000000002,
+          "ms": 0.00199855
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<long>, at::detail::Array<char*, 1> >(int, at::native::FillFunctor<long>, at::detail::Array<char*, 1>)",
+          "calls": 2.000000000000001,
+          "ms": 0.00196655
+        },
+        {
+          "name": "void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2> >(int, at::native::CUDAFunctorOnSelf_add<int>, at::detail::Array<char*, 2>)",
+          "calls": 1.0000000000000002,
+          "ms": 0.0012192
+        }
+      ],
+      "summed_kernel_ms": 5.631365299999998,
+      "kernel_union_ms": 2.67485205078125,
+      "projection_gpu_ms": {}
+    }
+  }
+]
