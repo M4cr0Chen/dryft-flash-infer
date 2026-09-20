@@ -71,7 +71,7 @@ FP8_PROJECTIONS = set(filter(None, os.environ.get(
 #: Projections whose decode weights are 4-bit (group-64 fp16 scales) instead
 #: of 8-bit. Half the bytes, four times the quantisation error; which ones can
 #: afford it is a question for teacher-forced replay, so the default is none.
-INT4_PROJECTIONS = set(filter(None, os.environ.get("DRYFT_INT4_PROJECTIONS", "qkv,o").split(",")))
+INT4_PROJECTIONS = set(filter(None, os.environ.get("DRYFT_INT4_PROJECTIONS", "").split(",")))
 
 #: Capture the decode step into a CUDA graph. Off is a real earlier stage of
 #: this engine, not a handicap: it is what the same forward costs when every
