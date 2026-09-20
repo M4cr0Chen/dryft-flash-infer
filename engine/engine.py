@@ -2,7 +2,7 @@
 
 The model's own forward, rebuilt: fused projections, Triton norm/RoPE/SwiGLU,
 a preallocated KV cache, and CUDA graphs over decode and short verification.
-Decode may use FP8-compressed weights where they win the warmup race; emitted
+Decode uses group-scaled INT8 weights where they win the warmup race; emitted
 tokens remain subject to native Qwen's teacher-forced two-logit margin.
 
 Shape-dependent work -- cache allocation, Triton compilation, graph capture --
@@ -70,6 +70,13 @@ FP8_PROJECTIONS = set(filter(None, os.environ.get(
 #: this engine, not a handicap: it is what the same forward costs when every
 #: step pays Python dispatch again.
 USE_GRAPH = os.environ.get("DRYFT_GRAPH", "on") == "on"
+PREFILL_GRAPH = os.environ.get("DRYFT_PREFILL_GRAPH", "off") == "on"
+#: Native integer MMA wins gate/up with two activation tiles (batches 9--16).
+#: Wider MLP quantization and combining it with the LM head failed replay.
+#: Keep those off; the warmup race still requires a 3% operation-level gain.
+INT8_MMA = os.environ.get("DRYFT_INT8_MMA", "on") == "on"
+INT8_NORM_FUSION = os.environ.get("DRYFT_INT8_NORM_FUSION", "on") == "on"
+INT8_MMA_PROJECTIONS = set(os.environ.get("DRYFT_INT8_MMA_PROJECTIONS", "gate_up").split(','))
 
 #: Pick projections per shape at warmup. Off keeps cuBLAS and F.linear.
 TUNE_MATMUL = os.environ.get("DRYFT_MATMUL", "tune") == "tune"
@@ -197,7 +204,10 @@ class Engine:
         self.capacity = self.batch = self.seq_len = 0
         self.graph = None
         self.short_verifier = None
+        self.prefill_graph = None
         self.quantised = None
+        self.integer_operands = {}
+        self.integer_mlp = self.integer_head = False
         self.families = {}
         self.fused_mlp = None
         self.fused_operand = None
@@ -273,6 +283,7 @@ class Engine:
         # Release the probe's buffers so the real workload allocates its own.
         self.capacity = 0
         self.graph = None
+        self.prefill_graph = None
         self.short_verifier = None
         self.k_cache = self.v_cache = None
         if self.cuda:
@@ -315,6 +326,7 @@ class Engine:
             return
 
         self.graph = None
+        self.prefill_graph = None
         self.short_verifier = None
         self.k_cache = self.v_cache = None
         if self.cuda:
@@ -409,6 +421,32 @@ class Engine:
                 self.short_verifier = None
             lap("short verifier")
 
+        if PREFILL_GRAPH and USE_GRAPH and self.cuda and not self._quick_race:
+            try:
+                self._capture_prefill()
+            except Exception:
+                traceback.print_exc()
+                self.prefill_graph = None
+                print("engine: prefill graph unavailable; using eager prefill", file=sys.stderr)
+            lap("prefill graph")
+
+    @torch.no_grad()
+    def _capture_prefill(self):
+        """Capture BF16 prefill on the persistent prompt-upload allocation."""
+        ids = self.ids_device.view(self.batch, self.seq_len)
+        self.ids_device.zero_()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            self._prefill(ids)
+        torch.cuda.current_stream().wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            self._prefill(ids)
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
+        self.prefill_graph = graph
+
     def _quantise(self) -> None:
         """INT8 with 64-wide block scales, laid out for the tensor-core kernel.
 
@@ -448,6 +486,7 @@ class Engine:
         model from the one that filled the cache.
         """
         self.matmul = {}
+        self.integer_mlp = self.integer_head = False
         self.operand = {}
         self.fused_mlp = None
         self.fused_operand = None
@@ -518,12 +557,82 @@ class Engine:
             self.families = chosen_families
             self._ordinary_matmul = dict(self.matmul)
         self._choose_mlp(batch, chosen_families.get("gate_up", "bf16"))
+        if INT8_MMA and self.cuda and 9 <= batch <= 32 and families is None and not self.draft:
+            try:
+                self._choose_integer_matmuls(batch)
+            except Exception:
+                traceback.print_exc()
+                print("engine: native INT8 selection unavailable; retaining existing runners", file=sys.stderr)
         if FUSED_ADD_NORM:
             for name in ("o", "down"):
                 if chosen_families.get(name) == "fp8":
                     self._choose_add_norm(name, batch)
         if self.cuda:
             torch.cuda.empty_cache()
+
+    @torch.no_grad()
+    def _choose_integer_matmuls(self, batch):
+        """Native W8A8 for tall matrices, only when the complete operation wins.
+
+        This path is restricted to non-speculative batches. Its activations are
+        quantized as well as its weights; ordinary and verification graphs must
+        not silently use different arithmetic if this is extended to batch one.
+        """
+        import functools
+        from kernels import cuda_int8
+        from kernels.timing import time_calls
+
+        for name in ('gate_up', 'lm_head'):
+            if name not in INT8_MMA_PROJECTIONS:
+                continue
+            # W8A8 gate/up failed replay when it also replaced BF16 weights.
+            # Combining W8A8 gate/up and head failed other prefixes. Preserve
+            # the ordinary weight family and spend activation precision on
+            # at most one of these operations for a workload.
+            if name == 'gate_up' and (batch > 16 or self.families.get(name) != 'fp8'):
+                continue
+            if name == 'lm_head' and self.integer_mlp:
+                continue
+            if not self.quantised.get(name):
+                continue
+            if name not in self.integer_operands:
+                self.integer_operands[name] = [cuda_int8.Prepared(w) for w in self.quantised[name]]
+            operands = self.integer_operands[name]
+            x = torch.randn(batch, operands[0].k, device=self.device, dtype=torch.bfloat16)
+            if name == 'gate_up' and self.fused_mlp is not None:
+                incumbent_fn = self.fused_mlp
+                old_operands = self.fused_operand
+            elif name == 'gate_up':
+                base = self.matmul[name]
+                incumbent_fn = lambda a, w: swiglu(base(a, w))
+                old_operands = self.operand[name]
+            else:
+                incumbent_fn, old_operands = self.matmul[name], self.operand[name]
+            incumbent = time_calls(lambda w: incumbent_fn(x, w), old_operands,
+                                   reps=1, trials=3, use_graph=USE_GRAPH)
+            reference = incumbent_fn(x, old_operands[0])
+            scale = reference.float().abs().max().item() or 1.
+            best, chosen = incumbent, None
+            for warps in (4, 8):
+                fn = functools.partial(cuda_int8.matmul, config=(warps, 1),
+                                       mode=2 if name == 'gate_up' else 0)
+                got = fn(x, operands[0])
+                if (not torch.isfinite(got).all().item()
+                        or (got.float()-reference.float()).abs().max().item()/scale > .08):
+                    continue
+                elapsed = time_calls(lambda w: fn(x, w), operands,
+                                     reps=1, trials=3, use_graph=USE_GRAPH)
+                if elapsed < best and elapsed < incumbent * .97:
+                    best, chosen = elapsed, fn
+            if chosen is not None:
+                if name == 'gate_up':
+                    self.fused_mlp, self.fused_operand = chosen, operands
+                    self.integer_mlp = True
+                else:
+                    self.matmul[name], self.operand[name] = chosen, operands
+                    self.integer_head = True
+            print(f"engine: {name:8s} native INT8={chosen is not None} "
+                  f"{incumbent/best:.2f}x vs incumbent", file=sys.stderr)
 
     def _choose_add_norm(self, name: str, batch: int) -> None:
         """Race the GEMM-plus-add-norm kernel against the planes-and-consumer pair.
@@ -686,6 +795,15 @@ class Engine:
 
         def add_project_norm(name, index, residual, source, fallback, norm_weight):
             """``residual + project(source)``, then the norm, reducing split-K planes in place."""
+            if matmul and INT8_NORM_FUSION and (
+                (name == 'o' and self.integer_mlp)
+                or (name == 'down' and index == self.n_layers - 1 and self.integer_head)
+            ):
+                from kernels.cuda_int8 import add_norm_quant
+                config = self.partial_config.get(name)
+                delta = (cuda_fp8.matmul_partials(source, self.operand[name][index], config)
+                         if config is not None else project(name, index, source, fallback))
+                return add_norm_quant(residual, delta, norm_weight, self.eps)
             warps = self.fused_out.get(name) if matmul else None
             if warps is not None:
                 return cuda_fp8.matmul_add_norm(
@@ -921,7 +1039,11 @@ class Engine:
             batch, seq_len = len(input_ids), len(input_ids[0])
             try:
                 self._ensure(batch, seq_len, max_new_tokens)
-                self._prefill(self._upload(input_ids, batch, seq_len))
+                ids = self._upload(input_ids, batch, seq_len)
+                if self.prefill_graph is None:
+                    self._prefill(ids)
+                else:
+                    self.prefill_graph.replay()
             except Exception:
                 traceback.print_exc()
                 print("engine: falling back to native Qwen", file=sys.stderr)

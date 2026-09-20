@@ -188,7 +188,7 @@ def benchmark(shapes=None, samples: int = 5, detune: str = "",
 def compare_benchmark(samples: int = 5, corpus: bool = True,
                       candidate_fp8: str = "on", short_draft: int = 2,
                       long_context: bool = False, candidate_kv: str = "bf16",
-                      baseline_fp8: str = "off"):
+                      baseline_fp8: str = "off", candidate_int8_mma: str = "off"):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -218,6 +218,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         for label in order:
             os.environ["DRYFT_FP8"] = candidate_fp8 if label == "candidate" else baseline_fp8
             os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
+            os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else "off"
             os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
@@ -233,7 +234,8 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
 @app.local_entrypoint()
 def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/paired.json",
             candidate_fp8: str = "on", short_draft: int = 2,
-            long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off"):
+            long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
+            candidate_int8_mma: str = "off"):
     import hashlib
     import json
     import subprocess
@@ -259,12 +261,13 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "samples": samples, "corpus": corpus,
         "baseline_fp8": baseline_fp8, "candidate_fp8": candidate_fp8, "candidate_kv": candidate_kv,
         "candidate_short_draft": short_draft,
+        "candidate_int8_mma": candidate_int8_mma,
         "long_context": long_context,
     }
     results = compare_benchmark.remote(samples=samples, corpus=corpus,
                                        candidate_fp8=candidate_fp8, short_draft=short_draft,
                                        long_context=long_context, candidate_kv=candidate_kv,
-                                       baseline_fp8=baseline_fp8)
+                                       baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")

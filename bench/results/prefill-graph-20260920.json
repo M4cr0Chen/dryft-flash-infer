@@ -1,0 +1,291 @@
+{
+  "started_at": "2026-09-20T05:40:14.584961+00:00",
+  "engine_sha256": "a21984ad19ec7b489d1e4429c34f60be790d415b814badd459d6f0371324ec74",
+  "results": [
+    {
+      "shape": [
+        "public-0",
+        1,
+        512,
+        32
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "graph",
+      "load_warmup_seconds": 21.328639165,
+      "variants": {
+        "eager": {
+          "tps": 324.21482186355973,
+          "seconds": 0.09869999100000015,
+          "ttft": 0.009724102999999928,
+          "spread": 0.011765269563171726,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.009569404000000503,
+              "seconds": 0.09783537600000258,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.009663704999997691,
+              "seconds": 0.09864926299999865,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.009738508000001644,
+              "seconds": 0.09878400400000231,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.009724102999999928,
+              "seconds": 0.09869999100000015,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.010009394000000782,
+              "seconds": 0.09899660800000021,
+              "gap": 0.0,
+              "exact": true
+            }
+          ]
+        },
+        "graph": {
+          "tps": 326.16628450510456,
+          "seconds": 0.09810946600000037,
+          "ttft": 0.009103634999998889,
+          "spread": 0.012274829831398335,
+          "worst_gap": 0.125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.0089796879999966,
+              "seconds": 0.09707580599999943,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.00927627699999789,
+              "seconds": 0.0982800829999988,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.009092826999999915,
+              "seconds": 0.09802150900000228,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.009218931000003039,
+              "seconds": 0.09822153800000066,
+              "gap": 0.0,
+              "exact": true
+            },
+            {
+              "ttft": 0.009103634999998889,
+              "seconds": 0.09810946600000037,
+              "gap": 0.0,
+              "exact": true
+            }
+          ]
+        }
+      },
+      "graph_capture_total_seconds": 22.73430877,
+      "peak_memory_fraction": 0.25551468073047473
+    },
+    {
+      "shape": [
+        "public-1",
+        4,
+        2048,
+        32
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "graph",
+      "load_warmup_seconds": 13.712827220999998,
+      "variants": {
+        "eager": {
+          "tps": 575.8818943978629,
+          "seconds": 0.22226779700000066,
+          "ttft": 0.11651621099999687,
+          "spread": 0.009353424238939506,
+          "worst_gap": 0.25,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.11573627399999964,
+              "seconds": 0.22168002000000087,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.11653556800000331,
+              "seconds": 0.2224219430000005,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.11731364799999966,
+              "seconds": 0.22375898499999636,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11651621099999687,
+              "seconds": 0.22224377299999531,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.1165041359999961,
+              "seconds": 0.22226779700000066,
+              "gap": 0.125,
+              "exact": false
+            }
+          ]
+        },
+        "graph": {
+          "tps": 573.9365537442491,
+          "seconds": 0.22302116699999885,
+          "ttft": 0.11670396400000271,
+          "spread": 0.008891770349298144,
+          "worst_gap": 0.25,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.11639882000000057,
+              "seconds": 0.22234064900000305,
+              "gap": 0.0625,
+              "exact": false
+            },
+            {
+              "ttft": 0.11601961799999572,
+              "seconds": 0.22183119299999987,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.11754393900000082,
+              "seconds": 0.223596888000003,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11829294899999354,
+              "seconds": 0.22381424599999633,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.11670396400000271,
+              "seconds": 0.22302116699999885,
+              "gap": 0.125,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "graph_capture_total_seconds": 18.319683083999998,
+      "peak_memory_fraction": 0.25551468073047473
+    },
+    {
+      "shape": [
+        "public-2",
+        16,
+        512,
+        128
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "graph",
+      "load_warmup_seconds": 16.725861627999997,
+      "variants": {
+        "eager": {
+          "tps": 3362.731371989054,
+          "seconds": 0.6090287250000017,
+          "ttft": 0.10587744999999416,
+          "spread": 0.00685726112505487,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10356029300000102,
+              "seconds": 0.6073103930000059,
+              "gap": 1.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.10548361099999681,
+              "seconds": 0.6090287250000017,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10587744999999416,
+              "seconds": 0.609208038999995,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10599021299999833,
+              "seconds": 0.6114866619999901,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.10606036100000438,
+              "seconds": 0.6081613949999962,
+              "gap": 1.375,
+              "exact": false
+            }
+          ]
+        },
+        "graph": {
+          "tps": 3367.0055590643174,
+          "seconds": 0.6082556039999929,
+          "ttft": 0.10480828699999734,
+          "spread": 0.009723308689836369,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10133973799999296,
+              "seconds": 0.6038736289999918,
+              "gap": 1.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.10426953500000025,
+              "seconds": 0.6084573619999958,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10521336799999403,
+              "seconds": 0.6082556039999929,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10480828699999734,
+              "seconds": 0.6080870189999956,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.10588408499999957,
+              "seconds": 0.6097878860000066,
+              "gap": 1.375,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "graph_capture_total_seconds": 25.517465805999997,
+      "peak_memory_fraction": 0.25551468073047473
+    }
+  ]
+}

@@ -2,6 +2,89 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Native integer MMA and fused activation packing, September 20
+
+Starting point: `e9b6f19`, the user-reported best is 1161.6 tok/s. The saved
+baseline lives at `/tmp/dryft-baseline-e9b6f19` for paired development runs.
+These measurements are local H100 results, not a new leaderboard score.
+
+The existing `cuda_fp8.py` stores INT8 but executes BF16 MMA after expanding
+weights. `cuda_int8.py` instead packs weight and activation fragments for
+`mma.sync.m16n8k32.s32.s8.s8.s32`. Weights retain the existing group-64
+quantization and FP16 scales. Activations use FP32 scales per 64 values. A
+four-group weight prefetch and shared-memory activation staging are necessary:
+the first version reading activations directly from L1 lost every race.
+
+The selected production path is **gate/up plus SwiGLU at batches 9--16**, only
+where ordinary decode already chose INT8 weights and a warmup race measures a
+3% win. Other batches retain the existing engine. The residual-add/RMSNorm
+before this projection also packs its normalized BF16 output directly into
+INT8. It preserves residual, normalization and gain-multiply BF16 rounding;
+20 GPU cases check residuals, packed bytes and scales bit-exact against the
+separate operations. This removes a standalone activation-quantization launch
+and its intermediate write/read. Prefill and batch-one speculation are unchanged.
+
+Controlled graph ablations on one H100, five alternating samples per shape:
+
+| Shape | Existing engine | Native INT8 + fused packing | Change | Worst gap |
+| --- | ---: | ---: | ---: | ---: |
+| 16 x 512 -> 128 | 3386.2 | 3550.3 | +4.85% | 1.375 |
+| 12 x 1024 -> 64 | 1813.1 | 1873.5 | +3.33% | 0.3125 |
+
+Source: `bench/results/native-int8-policy-ablation-20260920.json`.
+`DRYFT_INT8_MMA=off` restores the prior arithmetic; `DRYFT_INT8_NORM_FUSION=off`
+isolates activation-packing fusion. Both are on by default in this candidate.
+
+### Rejected configurations and the numerical limit
+
+- **BF16 prefill CUDA graphs:** outputs identical on all 15 public samples;
+  total-time changes below 1%. Kept opt-in with `DRYFT_PREFILL_GRAPH=on`.
+- **Reference W8A8 on every projection:** passed five public-2 and five
+  long-context prompts; worst gaps 0.375 and 0.25. This established arithmetic
+  feasibility only: the untuned reference kernel is slower than the engine.
+- **Two-component activation residual correction:** the full-model reference
+  failed at 4.5 logits despite being closer arithmetically. The native corrected
+  MLP passed the isolation prompts but cost substantially more than the original.
+- **Native W8A8 gate/up and LM head together:** +3.6% public-2 in a fresh-process
+  paired benchmark, but a 3.8125-logit failure. Not shipped.
+- **Native W8A8 gate/up at batches 24/32:** replacing the BF16 MLP weights and
+  quantizing activations failed at 3.125 logits. Not shipped.
+- **Native W8A8 LM head alone at wider batches:** about 1.2--1.3% end-to-end
+  gain, but a long technical-text sample reached exactly 2.0 logits. It remains
+  disabled; that headroom does not justify the small gain.
+
+The 60-trial prose/code/technical study of the narrowed MLP-or-head policy
+checked 115,560 emitted positions. Every trial passed, but the exact-limit
+LM-head result is why the final default keeps only the MLP path. For the enabled
+MLP shapes, corpus worst gaps are 1.75 at batch 16 and 0.625 at batch 12.
+This is finite validation, not a universal quantization-error bound.
+
+Reproduction: `bench/modal_next.py` runs graph, quant, micro, native, fused,
+isolate and ablation studies; its baseline explicitly disables new features.
+Use `--shape-set native` for batches 12/16/24/32 with longer continuations.
+`bench/modal_bench.py::compare --baseline-fp8 on --candidate-int8-mma on`
+compares against the actual current INT8 baseline, not BF16. The runtime is
+pinned, and H200 substitutions are rejected. All 40 CPU tests and local Dryft
+archive validation pass.
+
+Final fresh-process paired comparison (five samples, INT8 enabled in both
+engines), `paired-native-int8-final-20260920.json`:
+
+| Shape | Baseline tok/s | Candidate tok/s | Change |
+| --- | ---: | ---: | ---: |
+| public-0 | 339.5 | 339.5 | approximately flat |
+| public-1 | 573.9 | 571.2 | -0.5% |
+| public-2 | 3350.3 | 3502.8 | +4.6% |
+| 1 x 4096 -> 65 | 255.2 | 252.7 | -1.0% |
+
+All baseline and candidate samples pass the local gates. Only public-2 enters
+the new path; the other differences are within observed tuning/timing noise.
+The hidden score remains unmeasured for this candidate until its official run.
+
+Direct CLI archive upload now returns HTTP 405; the documented repository-push
+submission path is required. The CLI also needs `DRYFT_API=https://htn.dryft.ai`
+in this installation. No credentials are stored in the repository.
+
 ## 8-bit weights on the tensor cores, every batch, September 19 (evening)
 
 The earlier FP8 kernels moved half of cuBLAS's bytes and took longer: 0.84 to

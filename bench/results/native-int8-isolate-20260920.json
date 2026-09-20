@@ -1,0 +1,542 @@
+{
+  "started_at": "2026-09-20T05:57:27.106419+00:00",
+  "engine_sha256": "8feeeee19acbf6268c6f2031c352f9f5e9de70f35c0a2c998944b61c8a8a5aca",
+  "results": [
+    {
+      "shape": [
+        "public-2",
+        16,
+        512,
+        128
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "isolate",
+      "load_warmup_seconds": 28.849611094,
+      "variants": {
+        "head-only": {
+          "tps": 3380.3186567968046,
+          "seconds": 0.6058600410000068,
+          "ttft": 0.10484117200000043,
+          "spread": 0.04324150831395911,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.12880085700000166,
+              "seconds": 0.6313855089999976,
+              "gap": 1.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.10514539200000428,
+              "seconds": 0.6053412550000061,
+              "gap": 0.5,
+              "exact": false
+            },
+            {
+              "ttft": 0.10404052199999825,
+              "seconds": 0.6051872070000002,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10450264500000372,
+              "seconds": 0.6060073940000024,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10484117200000043,
+              "seconds": 0.6058600410000068,
+              "gap": 0.1875,
+              "exact": false
+            }
+          ]
+        },
+        "gate-only": {
+          "tps": 3508.9972419795804,
+          "seconds": 0.5836425219999981,
+          "ttft": 0.10520744000000093,
+          "spread": 0.00262238260973885,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10705011499999983,
+              "seconds": 0.5845673379999994,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.10269973700000179,
+              "seconds": 0.5833173420000008,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10520744000000093,
+              "seconds": 0.5836425219999981,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.1050514800000002,
+              "seconds": 0.5830368040000025,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10556464500000118,
+              "seconds": 0.5840043020000039,
+              "gap": 1.375,
+              "exact": false
+            }
+          ]
+        },
+        "gate-residual-head": {
+          "tps": 2784.8653106079787,
+          "seconds": 0.7354036089999951,
+          "ttft": 0.10515701299999591,
+          "spread": 0.0030066306079363937,
+          "worst_gap": 1.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.10515701299999591,
+              "seconds": 0.7370383310000008,
+              "gap": 0.625,
+              "exact": false
+            },
+            {
+              "ttft": 0.1050781040000004,
+              "seconds": 0.7348272439999946,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10510707999999624,
+              "seconds": 0.7354036089999951,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10541050099999438,
+              "seconds": 0.7352142949999987,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.10660021700000044,
+              "seconds": 0.7366569830000032,
+              "gap": 1.375,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "peak_memory_fraction": 0.27585330177080103
+    },
+    {
+      "shape": [
+        "wide-long-output",
+        32,
+        512,
+        128
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "isolate",
+      "load_warmup_seconds": 33.248400178000004,
+      "variants": {
+        "head-only": {
+          "tps": 4810.855880459873,
+          "seconds": 0.8514077539999931,
+          "ttft": 0.21170639700000038,
+          "spread": 0.002811955832850821,
+          "worst_gap": 0.375,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.21170639700000038,
+              "seconds": 0.8508685900000046,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.21148475100000041,
+              "seconds": 0.8514077539999931,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.2132215900000034,
+              "seconds": 0.8522458049999955,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.21079733999999917,
+              "seconds": 0.8501963479999972,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.2138178229999994,
+              "seconds": 0.8525904689999919,
+              "gap": 0.375,
+              "exact": false
+            }
+          ]
+        },
+        "gate-only": {
+          "tps": 4894.992497844455,
+          "seconds": 0.8367734989999889,
+          "ttft": 0.21301911400000506,
+          "spread": 0.003966991072204862,
+          "worst_gap": 3.125,
+          "passes_accuracy": false,
+          "samples": [
+            {
+              "ttft": 0.21442505800000333,
+              "seconds": 0.8388922219999984,
+              "gap": 3.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.21301911400000506,
+              "seconds": 0.8372617039999994,
+              "gap": 1.6875,
+              "exact": false
+            },
+            {
+              "ttft": 0.2119607650000006,
+              "seconds": 0.8367734989999889,
+              "gap": 0.75,
+              "exact": false
+            },
+            {
+              "ttft": 0.21385050800000727,
+              "seconds": 0.8357163090000057,
+              "gap": 0.3125,
+              "exact": false
+            },
+            {
+              "ttft": 0.21224263999999948,
+              "seconds": 0.8355727490000078,
+              "gap": 0.5,
+              "exact": false
+            }
+          ]
+        },
+        "gate-residual-head": {
+          "tps": 3501.4064925913785,
+          "seconds": 1.1698156180000012,
+          "ttft": 0.21382812800000295,
+          "spread": 0.0009819812475851907,
+          "worst_gap": 0.75,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.21287949000000594,
+              "seconds": 1.1690809709999996,
+              "gap": 0.75,
+              "exact": false
+            },
+            {
+              "ttft": 0.21382812800000295,
+              "seconds": 1.1698156180000012,
+              "gap": 0.375,
+              "exact": false
+            },
+            {
+              "ttft": 0.21290421300000162,
+              "seconds": 1.1693212979999998,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.21451299400000323,
+              "seconds": 1.1699845360000012,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.21581495300000597,
+              "seconds": 1.170229708000008,
+              "gap": 0.375,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "peak_memory_fraction": 0.3445558654701503
+    },
+    {
+      "shape": [
+        "coverage-12",
+        12,
+        1024,
+        64
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "isolate",
+      "load_warmup_seconds": 14.604670445999986,
+      "variants": {
+        "head-only": {
+          "tps": 1813.2147430451,
+          "seconds": 0.42355711199999746,
+          "ttft": 0.16277773500002013,
+          "spread": 0.003577050076765318,
+          "worst_gap": 1.0,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.16283050699999535,
+              "seconds": 0.42323971900000856,
+              "gap": 1.0,
+              "exact": false
+            },
+            {
+              "ttft": 0.1621884179999995,
+              "seconds": 0.4226881769999977,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.16258928700000297,
+              "seconds": 0.4239831659999993,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.16277773500002013,
+              "seconds": 0.42355711199999746,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.16422934499999542,
+              "seconds": 0.4242032619999918,
+              "gap": 0.25,
+              "exact": false
+            }
+          ]
+        },
+        "gate-only": {
+          "tps": 1863.7304505869301,
+          "seconds": 0.41207675699999413,
+          "ttft": 0.16322343499999192,
+          "spread": 0.006773543891013533,
+          "worst_gap": 0.3125,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.16322343499999192,
+              "seconds": 0.41380355300000815,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.16304371999999034,
+              "seconds": 0.4120575469999892,
+              "gap": 0.3125,
+              "exact": false
+            },
+            {
+              "ttft": 0.1636367469999982,
+              "seconds": 0.41207675699999413,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.16378090799997835,
+              "seconds": 0.4130152179999982,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.16141656299998886,
+              "seconds": 0.4110123330000022,
+              "gap": 0.1875,
+              "exact": false
+            }
+          ]
+        },
+        "gate-residual-head": {
+          "tps": 1584.8669082322142,
+          "seconds": 0.4845832769999845,
+          "ttft": 0.16337484700000005,
+          "spread": 0.004076027988857285,
+          "worst_gap": 0.25,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.16337484700000005,
+              "seconds": 0.4843819829999916,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.1622188089999952,
+              "seconds": 0.4845832769999845,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.1642064939999841,
+              "seconds": 0.48578236699998456,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.16314562300001967,
+              "seconds": 0.4839870990000179,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.16492469400000687,
+              "seconds": 0.485962274000002,
+              "gap": 0.125,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "peak_memory_fraction": 0.2881142738362834
+    },
+    {
+      "shape": [
+        "coverage-24",
+        24,
+        257,
+        33
+      ],
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "stage": "isolate",
+      "load_warmup_seconds": 27.62003915400001,
+      "variants": {
+        "head-only": {
+          "tps": 3513.2276681314784,
+          "seconds": 0.22543372500001624,
+          "ttft": 0.08325215000002117,
+          "spread": 0.006641929906425964,
+          "worst_gap": 0.25,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.08420497500000579,
+              "seconds": 0.2261715570000149,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.08325215000002117,
+              "seconds": 0.22543372500001624,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.08177713800000674,
+              "seconds": 0.22513150800000403,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.0833929650000016,
+              "seconds": 0.22598759499999233,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.08252505800001586,
+              "seconds": 0.22467424200002029,
+              "gap": 0.125,
+              "exact": false
+            }
+          ]
+        },
+        "gate-only": {
+          "tps": 3601.4112621133345,
+          "seconds": 0.21991378999999256,
+          "ttft": 0.0840765739999938,
+          "spread": 0.011964033724364288,
+          "worst_gap": 3.125,
+          "passes_accuracy": false,
+          "samples": [
+            {
+              "ttft": 0.08487863499999548,
+              "seconds": 0.22216717699998867,
+              "gap": 3.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.08402678900000637,
+              "seconds": 0.22066649199999233,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.08435384300000237,
+              "seconds": 0.219536120999976,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.0840765739999938,
+              "seconds": 0.21991378999999256,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.08326017400000296,
+              "seconds": 0.21978252400000997,
+              "gap": 0.625,
+              "exact": false
+            }
+          ]
+        },
+        "gate-residual-head": {
+          "tps": 2934.5131706563034,
+          "seconds": 0.26989144500001316,
+          "ttft": 0.08398924300001909,
+          "spread": 0.021475182364527178,
+          "worst_gap": 0.625,
+          "passes_accuracy": true,
+          "samples": [
+            {
+              "ttft": 0.08591640000000211,
+              "seconds": 0.27307863900000484,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.08398924300001909,
+              "seconds": 0.27112639000000627,
+              "gap": 0.125,
+              "exact": false
+            },
+            {
+              "ttft": 0.08359139899999946,
+              "seconds": 0.26989144500001316,
+              "gap": 0.1875,
+              "exact": false
+            },
+            {
+              "ttft": 0.08420341800001552,
+              "seconds": 0.2696586870000033,
+              "gap": 0.25,
+              "exact": false
+            },
+            {
+              "ttft": 0.08131111000000146,
+              "seconds": 0.2672826710000038,
+              "gap": 0.625,
+              "exact": false
+            }
+          ]
+        }
+      },
+      "peak_memory_fraction": 0.2848895352321729
+    }
+  ]
+}
