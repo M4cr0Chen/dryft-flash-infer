@@ -58,15 +58,46 @@ negative (-339 us) because kernels now overlap, and per-kernel times inflate
 with the time spent in `griddepcontrol.wait`, so the step wall is the number
 to read. Early trigger is the default.
 
+### Official result
+
+Commit `526318f`, run `8c9ea1b2`: **1257.7 tok/s, ranked**, all workloads
+passed; public 352.0 / 605.8 / 3799.2 tok/s. Up from 1212.1 (+3.8%), in line
+with the paired +3.5%. `official-pdl-20260920.json`.
+
+### RoPE and attention join the chain, without a rewrite
+
+Triton's launcher cannot set the programmatic attribute, but its compiled
+kernel exposes the `CUfunction`. `kernels/triton_pdl.py::Programmatic` lets
+the first call go through Triton (compile and specialise), then relaunches
+the function through `cuda_jit.Kernel.launch_ex` with the arguments Triton
+kept: `arg_names` minus `compiled.src.constants`, which holds the constexprs
+and the integers Triton specialised to one (the RoPE kernel's `T=1` is one).
+`griddepcontrol` goes in through `tl.inline_asm_elementwise`; its operand must
+have at least as many elements as the block has threads, or only the thread
+holding the element waits and the rest race ahead. `check_triton_pdl`: 20
+tensors bit-exact against the Triton launch over five batch/token shapes.
+
+With RoPE, attention and merge in, all ten launches of a layer are in the
+chain. Paired against `526318f` (`paired-triton-pdl-20260920.json`):
+
+| Shape | `526318f` | All ten in the chain |
+| --- | ---: | ---: |
+| public-0, 1 x 512 -> 32 | 351.7 | 360.3 (+2.5%) |
+| public-1, 4 x 2048 -> 32 | 601.6 | 602.4 (+0.1%) |
+| public-2, 16 x 512 -> 128 | 3667.7 | 3763.2 (+2.6%) |
+| 1 x 4096 -> 65 | 269.4 | 277.7 (+3.1%) |
+| geomean | | **+2.1%** |
+
+All gates pass, tie gaps unchanged or lower, load plus warmup 14-17 s. The
+batch-16 step is 3.388 ms. Batch 4 at 2048 context is flat because its time
+is half prefill, which this does not touch.
+
 ### Left in this pool
 
-RoPE (36 launches, 127 us) and attention (36, 600 us) are Triton and break
-the chain twice per layer: the GEMM after each launches only when it
-completes. Pulling them in needs either Triton's compiled `CUfunction`
-launched through `launch_ex` with `griddepcontrol` via inline asm, or CUDA
-ports. The two-phase norm fusion (producer writes residual plus partial
-sum of squares, consumer normalises while staging) would remove the RMSNorm
-launches outright and stacks with this.
+The two-phase norm fusion (producer writes residual plus partial sum of
+squares, consumer normalises while staging) would remove the RMSNorm launches
+outright and stacks with this. Beyond that the launch pool is spent; the
+batch-32 GEMM is the next lever.
 
 ## Below eight bits: a 4-bit kernel that works and a margin that does not, September 20
 

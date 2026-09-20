@@ -64,6 +64,8 @@ image = (
     .add_local_file("bench/int4_probe.py", "/root/int4_probe.py")
     .add_local_file("bench/pdl_probe.py", "/root/pdl_probe.py")
     .add_local_file("bench/pdl_diag.py", "/root/pdl_diag.py")
+    .add_local_file("bench/triton_pdl_probe.py", "/root/triton_pdl_probe.py")
+    .add_local_file("bench/triton_abi_probe.py", "/root/triton_abi_probe.py")
     .add_local_file("bench/gemm_bisect.py", "/root/gemm_bisect.py")
     .add_local_file("bench/tiled_probe.py", "/root/tiled_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
@@ -208,7 +210,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
                             check_fp8_mma, check_kv_int8, check_fused_add_norm, check_int4,
-                            check_cuda_small,
+                            check_cuda_small, check_triton_pdl,
                             check_separate_decode_norm, check_partial_swiglu)
 
     _describe_gpu(require_h100=True)
@@ -226,6 +228,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         if candidate_pdl != "off":
             os.environ["DRYFT_PDL"] = candidate_pdl
             check_cuda_small()
+            check_triton_pdl()
             os.environ["DRYFT_PDL"] = "off"
     results = {"baseline": [], "candidate": []}
     shapes = list(PUBLIC_SHAPES)
@@ -1707,6 +1710,47 @@ def kv_checks():
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def triton_abi_probe():
+    """Which parameters Triton kept for the compiled RoPE kernel, and whether the relaunch matches."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/triton_abi_probe.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-4000:], flush=True)
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def pdl_checks(attribute: str = "on"):
+    """Only the programmatic-launch GPU checks, for quick iteration."""
+    import os
+    import sys
+
+    sys.path.insert(0, "/root")
+    os.environ["DRYFT_PDL"] = "early"
+    os.environ["DRYFT_TRITON_PDL_ATTR"] = attribute
+    from gpu_checks import check_triton_pdl
+
+    _describe_gpu(require_h100=True)
+    check_triton_pdl()
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def triton_pdl_probe():
+    """Whether a Triton kernel can be relaunched programmatically through its CUfunction."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/triton_pdl_probe.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-5000:], flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def pdl_diag():
     """Whether programmatic dependent launch engages on this driver, eager and graphed."""
     import subprocess

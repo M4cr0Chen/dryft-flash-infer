@@ -490,3 +490,54 @@ def check_cuda_small():
                 raise AssertionError(f"partial_swiglu differs by {ulps} ulps at rows={rows} splits={splits}")
             cases += 1
     print(f"GPU CUDA small kernels: {cases} cases passed; worst difference {worst} bf16 ulp", flush=True)
+
+
+def check_triton_pdl():
+    """RoPE and attention launched through their CUfunction match the Triton launch bit for bit."""
+    import sys
+    import torch
+
+    sys.path.insert(0, "/root/engine")
+    from kernels import triton_pdl
+    from kernels.attention import DecodeAttention
+    from kernels.rope import qkv_planes_norm_rope_to_cache
+
+    torch.manual_seed(17)
+    cases = 0
+    for batch, tokens, context in ((1, 1, 512), (1, 3, 520), (4, 1, 2048), (16, 1, 512), (32, 1, 300)):
+        n_q, n_kv, d = 32, 8, 128
+        rows = batch * tokens
+        cap = context + 16
+        outs = {}
+        for enabled in (False, True):
+            triton_pdl.ENABLED = enabled
+            torch.manual_seed(5)
+            planes = torch.randn(4, rows, (n_q + 2 * n_kv) * d, dtype=torch.float32, device="cuda")
+            qw = 1 + 0.1 * torch.randn(d, dtype=torch.bfloat16, device="cuda")
+            kw = 1 + 0.1 * torch.randn(d, dtype=torch.bfloat16, device="cuda")
+            cos = torch.randn(cap, d, dtype=torch.bfloat16, device="cuda")
+            sin = torch.randn(cap, d, dtype=torch.bfloat16, device="cuda")
+            positions = (torch.arange(rows, device="cuda") % tokens + context - tokens).to(torch.int32)
+            k_cache = torch.randn(batch, n_kv, cap, d, dtype=torch.bfloat16, device="cuda")
+            v_cache = torch.randn(batch, n_kv, cap, d, dtype=torch.bfloat16, device="cuda")
+            q = None
+            for _ in range(2):   # first call compiles and launches plainly, second goes programmatic
+                q = qkv_planes_norm_rope_to_cache(planes, n_q, n_kv, qw, kw, cos, sin, positions,
+                                                  tokens, k_cache, v_cache, 1e-6)
+            pos = torch.full((batch,), context, dtype=torch.int32, device="cuda")
+            attn = DecodeAttention(batch, n_kv, n_q // n_kv, d, cap, "cuda", tokens=tokens)
+            out = None
+            for _ in range(2):
+                out = attn(q, k_cache, v_cache, pos).clone()
+            torch.cuda.synchronize()
+            outs[enabled] = (q.clone(), k_cache.clone(), v_cache.clone(), out)
+        for name, a, b in zip(("q", "k_cache", "v_cache", "attention"), outs[False], outs[True]):
+            if not torch.equal(a, b):
+                diff = (a.float() - b.float()).abs()
+                where = (diff > 0).nonzero()[:4].tolist()
+                raise AssertionError(f"programmatic Triton launch differs at batch={batch} tokens={tokens}: "
+                                     f"{name} max {diff.max().item():.4g} at {where} "
+                                     f"({(diff > 0).sum().item()} of {diff.numel()} elements)")
+        cases += 4
+    triton_pdl.ENABLED = triton_pdl.PDL != 0
+    print(f"GPU Triton programmatic launch: {cases} tensors bit-exact", flush=True)

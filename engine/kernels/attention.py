@@ -24,6 +24,8 @@ import torch
 import triton
 import triton.language as tl
 
+from .triton_pdl import Programmatic, gdc_trigger, gdc_wait
+
 _BLOCK_N = 64
 _PAD_M = 16  # tl.dot wants at least 16 rows; a KV group only has four
 # 128 programs nearly fill an H100's 132 SMs. Doubling that work merely to
@@ -38,6 +40,8 @@ def _split_kernel(
     GROUP: tl.constexpr, D: tl.constexpr, BLOCK_N: tl.constexpr, PAD_M: tl.constexpr,
     TOKENS: tl.constexpr, NKV: tl.constexpr, DIRECT: tl.constexpr, QUANT: tl.constexpr,
 ):
+    gdc_trigger()
+    gdc_wait()
     head = tl.program_id(0)  # batch * n_kv_heads + kv_head
     part = tl.program_id(1)
 
@@ -128,6 +132,8 @@ def _merge_kernel(
     SPLITS: tl.constexpr, GROUP: tl.constexpr, D: tl.constexpr, WIDTH: tl.constexpr,
     TOKENS: tl.constexpr, NKV: tl.constexpr,
 ):
+    gdc_trigger()
+    gdc_wait()
     head = tl.program_id(0).to(tl.int64)
     token = tl.program_id(1).to(tl.int64)
 
@@ -276,7 +282,7 @@ class DecodeAttention:
         heads = self.batch * self.n_kv
         if self.quant != (k_scale is not None):
             raise ValueError("scales must be given exactly when the cache is quantised")
-        _split_kernel[(heads, self.splits)](
+        _split_launch((heads, self.splits),
             q, k_cache, v_cache,
             k_scale if self.quant else k_cache, v_scale if self.quant else v_cache,
             pos, self.acc, self.peak, self.total, self.out, self.scale,
@@ -288,10 +294,14 @@ class DecodeAttention:
         )
         if self.direct:
             return self.out
-        _merge_kernel[(heads, self.tokens)](
+        _merge_launch((heads, self.tokens),
             self.acc, self.peak, self.total, self.out, self.n_q,
             SPLITS=self.splits, GROUP=self.group, D=self.head_dim,
             WIDTH=self.group * self.head_dim, TOKENS=self.tokens, NKV=self.n_kv,
             num_warps=4,
         )
         return self.out
+
+
+_split_launch = Programmatic(_split_kernel)
+_merge_launch = Programmatic(_merge_kernel)

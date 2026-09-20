@@ -17,6 +17,8 @@ import torch
 import triton
 import triton.language as tl
 
+from .triton_pdl import Programmatic, gdc_trigger, gdc_wait
+
 _HEAD_DIM = 128
 _HEADS_PER_PROGRAM = 8
 
@@ -183,6 +185,8 @@ def _qkv_planes_kernel(
     The reduce that a separate kernel would have done happens in the loads;
     the rounded bf16 value is then exactly what ``_qkv_kernel`` would read.
     """
+    gdc_trigger()
+    gdc_wait()
     row = tl.program_id(0).to(tl.int64)
     block = tl.program_id(1)
     is_query = block < tl.cdiv(NQ, BH)
@@ -240,13 +244,16 @@ def qkv_planes_norm_rope_to_cache(
     out = torch.empty((rows, n_q * _HEAD_DIM), dtype=torch.bfloat16, device=planes.device)
     block = min(_HEADS_PER_PROGRAM, n_q, n_kv)
     caches, quant, copy = _cache_args(k_cache, v_cache, k_scale, v_scale, k_copy, v_copy)
-    _qkv_planes_kernel[(rows, triton.cdiv(n_q, block) + triton.cdiv(n_kv, block))](
+    _qkv_planes_launch((rows, triton.cdiv(n_q, block) + triton.cdiv(n_kv, block)),
         planes, q_weight, k_weight, cos, sin, positions, out, *caches,
         seq_len, k_cache.shape[2], rows, eps,
         STRIDE=stride, D=_HEAD_DIM, NQ=n_q, NKV=n_kv, BH=block, SPLITS=splits,
         QUANT=quant, BF16_COPY=copy, num_warps=4,
     )
     return out
+
+
+_qkv_planes_launch = Programmatic(_qkv_planes_kernel)
 
 
 def qkv_norm_rope_to_cache(
