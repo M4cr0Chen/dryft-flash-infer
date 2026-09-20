@@ -152,11 +152,14 @@ def gate_up_swiglu(x: torch.Tensor, weight: torch.Tensor, config=None) -> torch.
     inter = weight.shape[0] // 2
     if k % 8:
         raise ValueError(f"K={k} is not a multiple of eight")
-    if batch > 16:
-        raise ValueError("the fused mlp serves batch 16 and under")
+    # Each CUDA specialization reads and writes exactly NB rows. Rounding a
+    # three-row verification up to NB=4 overruns both shared input and output;
+    # let the tuner keep a general GEMM for unsupported row counts.
+    if batch not in (1, 2, 4, 8, 16):
+        raise ValueError("the fused mlp requires 1, 2, 4, 8, or 16 rows")
     block, grid = config or (256, 264)
     out = torch.empty((batch, inter), dtype=torch.bfloat16, device=x.device)
-    slot = next(nb for nb in (1, 2, 4, 8, 16) if nb >= batch)
+    slot = batch
     kernel = _module.kernel(f"gate_up_swiglu_b{slot}")
     kernel.set_shared(batch * k * 2)
     kernel(grid, block, weight, x, out, inter, k, batch)

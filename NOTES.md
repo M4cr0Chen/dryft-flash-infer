@@ -2,6 +2,123 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## MLP, attention, and short verification, September 19
+
+Starting point: commit `0949421`; the user reports **940 tok/s** on Dryft.
+The measurements below are local H100 studies, not hidden leaderboard scores.
+
+### MLP profile
+
+`bench/results/mlp-profile-20260919.json` attributes CUDA time to each prefill
+projection and times the selected decode projections across all 36 weights.
+
+| Batch / prompt | Prefill wall, ms | Gate/up + down, ms | Decode wall, ms | Gate/up + SwiGLU + down, ms |
+| --- | ---: | ---: | ---: | ---: |
+| 1 / 512 | 9.38 | 5.09 | 3.98 | 2.17 |
+| 4 / 2048 | 122.96 | 63.16 | 4.72 | 2.28 |
+| 16 / 512 | 113.25 | 64.04 | 4.66 | 2.29 |
+
+MLP work is about half the stage time. Prefill already dispatches to Hopper
+cuBLAS tensor-core kernels and PyTorch FlashAttention. On the 8192-row prefills,
+SwiGLU itself takes about 5.8 ms across all layers; eliminating only its launch
+and intermediate traffic cannot eliminate the much larger matrix-product cost.
+This supports targeting the MLP projections, without establishing their limit.
+No new fused MLP implementation was benchmarked in this study.
+
+The profiler event table includes nested scopes with attributed CUDA time and
+must not be summed. The projection breakdown is disjoint. Decode microtimings
+include two state-restoration copies and are not generation throughput.
+
+### Attention dispatch
+
+`bench/results/attention-study-20260919.json` sweeps 30 configurations at the
+start and end of generation. Winners were `(splits, block, warps)` of
+`(16,64,4)`, `(4,128,4)`, and `(1,64,4)` for the three public shapes. Isolated
+attention gains translated to roughly 0-1% of complete decode, not a large
+throughput improvement. Some token choices change with the reduction layout;
+teacher-forced gaps, rather than token identity, determine correctness.
+
+The candidate adds a direct normalized-output path for one partition, plus a
+warmup-only dispatch race over eight configurations. It times all layers at
+both ends of generation, checks finite outputs, and keeps the original unless
+the attention measurement improves by at least 5%. No prompt-dependent tuning
+runs during measured generation. The final default retains the original
+dispatch; `DRYFT_ATTENTION_TUNE=on` enables the experimental race.
+
+`bench/results/paired-attention-20260919.json` compares fresh baseline/candidate
+processes on one H100, with five corpus samples per public shape:
+
+| Shape | Baseline tok/s | Tuned tok/s | Change |
+| --- | ---: | ---: | ---: |
+| public-0 | 248.8 | 248.7 | approximately flat |
+| public-1 | 500.9 | 497.7 | -0.6% |
+| public-2 | 3003.9 | 3037.0 | +1.1% |
+
+The geometric-mean change is **+0.14%, inconclusive at this scale**. All 15
+candidate samples pass; worst gap 0.375, longest load plus warmup 35.83 seconds.
+The archive's subsequent MLP row-count guard does not affect these power-of-two
+batches. A separate controlled comparison holds projection choices fixed and
+alternates baseline/candidate per prompt to isolate the smaller attention effect.
+`bench/results/attention-controlled-20260919.json` measured +0.68%, -0.84%, and
++0.97% on the three shapes. Batch four retained the original attention in both
+graphs, making its difference a useful indication of measurement/graph-layout
+variation. The overall change remains too small to call a reliable gain;
+attention tuning stays opt-in. All 30 controlled-comparison samples also pass.
+
+GPU validation checks 54 attention cases against SDPA, including 1/2/3 query
+positions, first/last cache positions, empty partitions, non-power-of-two
+capacity, and poisoned unused cache slots. Maximum output error was 0.00390625.
+The six existing fused RoPE checks remain bit-exact.
+
+### Short speculative verification
+
+`bench/short_spec.py` retains the ordinary one-row graph and captures separately
+tuned two- and three-row graphs. Empty proposals use ordinary decode; rejected
+drafts emit the target correction and roll the live cache position forward by
+only the verified output count. The prototype is outside the submitted engine.
+
+`bench/results/short-speculation-20260919.json` contains **225 trials**: baseline
+and four policies, five prompts in each of three domains, at three batch-one
+prompt/output shapes. Every trial passed teacher-forced replay, worst gap
+0.375. Different BF16 forward shapes sometimes change a near-tie token, so
+the artifact records ordinary-stream token equality separately from validity.
+
+For two draft tokens, order-two lookup, and a 1.15 tokens/pass governor:
+
+| Prompt / output | Prose speedup | Code speedup | Technical speedup |
+| --- | ---: | ---: | ---: |
+| 512 / 32 | 0.990x | 1.103x | 1.014x |
+| 2048 / 32 | 0.996x | 1.099x | 1.067x |
+| 512 / 128 | 1.025x | 1.123x | 1.128x |
+
+Maximum spread for that policy was 12.6%; across all capped policies, 14.0%.
+Uncapped order-three proposals reached 1.31x median in one code case but broke
+the 25% spread gate in multiple code/technical cases (up to 50.5%). This is a
+useful conditional gain, not evidence for a corpus-independent default. The
+prose corpus is Pride and Prejudice, code is the pinned Qwen implementation,
+and technical text is this repository's implementation guide. None is a claim
+about the judge's hidden corpus.
+
+The first prototype run exposed an existing memory-safety bug in `cuda_mlp.py`:
+the wrapper rounded three rows up to a four-row specialization, while the CUDA
+kernel unconditionally loaded and stored all four rows. The same issue affected
+other non-power-of-two batches. The wrapper now rejects unsupported row counts
+before launch; the existing tuner then retains a general GEMM. Four CPU
+regressions cover 3, 5, 9, and 17 rows. The corrected three-row verification
+path completed the full GPU study. A separate benchmark text-encoding error
+was also corrected before the final recorded run.
+
+Modal runs: [MLP profile](https://modal.com/apps/macrochen05/main/ap-kROpMoIwtKOeK3z9Qziphr),
+[attention sweep](https://modal.com/apps/macrochen05/main/ap-c2GpIm52SG8mWESJZBEpoe),
+[paired attention](https://modal.com/apps/macrochen05/main/ap-qcUwIBAMxMhOzHSllRelU6),
+[controlled attention](https://modal.com/apps/macrochen05/main/ap-rFqFAWol6Qwo6UhFsUyOdm),
+[short verification](https://modal.com/apps/macrochen05/main/ap-m0mc6cJojSkvuVZ9NDbTQt).
+
+Final validation: 37 CPU tests pass; 54 GPU attention cases and six fused RoPE
+cases pass; the Dryft CLI accepts the source archive. The safety fix is enabled.
+The attention tuner is opt-in, and short verification remains a benchmark
+prototype. No official run was triggered by this investigation.
+
 ## Re-audit, September 19
 
 The historical conclusions below are hypotheses, not hardware limits. In

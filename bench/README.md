@@ -52,3 +52,47 @@ The older `trace` and `utilisation` advanced positions beyond their allocated
 cache/RoPE tables. Their historical timings cannot establish a performance
 limit. Likewise, eager Python-launch races can rank kernels differently from
 the CUDA graph that executes them in production.
+
+## MLP, attention, and short verification studies
+
+```sh
+.venv/bin/modal run bench/modal_bench.py::study --stage profile \
+  --output bench/results/mlp-profile.json
+.venv/bin/modal run bench/modal_bench.py::study --stage attention \
+  --output bench/results/attention-study.json
+.venv/bin/modal run bench/modal_bench.py::study --stage attention_paired \
+  --output bench/results/attention-controlled.json
+.venv/bin/modal run bench/modal_bench.py::study --stage speculation \
+  --output bench/results/short-speculation.json
+```
+
+The MLP profile attributes eager prefill's GPU time to each projection and
+times the selected decode projections while sweeping all 36 weights in a
+graph. The profiler event table includes nested CPU scopes with attributed
+GPU time: do not sum that table. The projection totals are disjoint, while
+the separate full-stage wall times include the rest of execution.
+
+The attention study compares 30 split/block/warp configurations at both ends
+of generation, then compares the best candidate inside the complete decode
+graph in alternating order. A one-partition candidate writes the normalized
+output directly, avoiding the merge. The separate paired benchmark checks
+actual generated tokens teacher-forced; equal microbenchmark outputs alone
+do not establish whole-model correctness. `check_attention_dispatch` also
+checks 54 SDPA comparisons with causal boundaries, empty partitions, a partial
+last block, and NaNs beyond the valid cache.
+
+`attention_paired` holds the engine's projection choices fixed, captures an
+ordinary and a tuned graph, and alternates them per prompt. The default engine
+keeps the original dispatch because measured total improvements were small;
+set `DRYFT_ATTENTION_TUNE=on` to evaluate the optional warmup tuner.
+
+`short_spec.py` is a benchmark-only prototype. It captures separately tuned
+two- and three-row verification graphs, retaining ordinary decode for empty
+proposals. Every accepted draft token must equal the target prediction on its
+own prefix; rejection emits the target's correction. The study compares four
+policies with ordinary decode on five prompts each from prose, Qwen source
+code, and the implementation guide. It tests batch one at 512/32, 2048/32, and
+512/128 prompt/output lengths, rotating trial order and teacher-forcing every
+sample. This is a generalization check, not the judge's hidden corpus. The
+attention sweep and speculation study explicitly disable attention autotuning
+to keep their baselines independent of that experiment.

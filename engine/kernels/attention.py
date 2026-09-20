@@ -13,6 +13,8 @@ Numerics follow the SDPA kernels the reference dispatches to: fp32 softmax and
 accumulator, the probability-by-value product in bfloat16.
 """
 
+import sys
+
 import torch
 import triton
 import triton.language as tl
@@ -23,10 +25,10 @@ _PAD_M = 16  # tl.dot wants at least 16 rows; a KV group only has four
 
 @triton.jit
 def _split_kernel(
-    Q, K, V, POS, PACC, PM, PL, scale, NQ,
+    Q, K, V, POS, PACC, PM, PL, OUT, scale, NQ,
     LMAX: tl.constexpr, SPLIT: tl.constexpr, SPLITS: tl.constexpr,
     GROUP: tl.constexpr, D: tl.constexpr, BLOCK_N: tl.constexpr, PAD_M: tl.constexpr,
-    TOKENS: tl.constexpr, NKV: tl.constexpr,
+    TOKENS: tl.constexpr, NKV: tl.constexpr, DIRECT: tl.constexpr,
 ):
     head = tl.program_id(0)  # batch * n_kv_heads + kv_head
     part = tl.program_id(1)
@@ -82,15 +84,25 @@ def _split_kernel(
     peak = tl.where(empty, -float("inf"), peak)
     total = tl.where(empty, 0.0, total)
 
-    width = TOKENS * GROUP
-    slot = head.to(tl.int64) * SPLITS + part
-    tl.store(PM + slot * width + rows, peak, mask=valid)
-    tl.store(PL + slot * width + rows, total, mask=valid)
-    tl.store(
-        PACC + slot * (width * D) + rows[:, None] * D + dims[None, :],
-        tl.where(empty[:, None], 0.0, acc),
-        mask=valid[:, None],
-    )
+    if DIRECT:
+        # One partition already holds the entire softmax reduction. Avoid
+        # materialising fp32 partials and launching a separate merge kernel.
+        out = acc / total[:, None]
+        tl.store(
+            OUT + ((sequence * TOKENS + token.to(tl.int64)) * NQ
+                   + kv_head * GROUP + lane)[:, None] * D + dims[None, :],
+            out.to(OUT.dtype.element_ty), mask=valid[:, None],
+        )
+    else:
+        width = TOKENS * GROUP
+        slot = head.to(tl.int64) * SPLITS + part
+        tl.store(PM + slot * width + rows, peak, mask=valid)
+        tl.store(PL + slot * width + rows, total, mask=valid)
+        tl.store(
+            PACC + slot * (width * D) + rows[:, None] * D + dims[None, :],
+            tl.where(empty[:, None], 0.0, acc),
+            mask=valid[:, None],
+        )
 
 
 @triton.jit
@@ -156,12 +168,20 @@ class DecodeAttention:
     decoding, or the confirmed token plus its draft when speculating.
     """
 
-    def __init__(self, batch, n_kv, group, head_dim, capacity, device, tokens=1):
+    def __init__(self, batch, n_kv, group, head_dim, capacity, device, tokens=1,
+                 config=None):
         self.batch, self.n_kv, self.group, self.head_dim = batch, n_kv, group, head_dim
         self.capacity, self.tokens = capacity, tokens
         self.n_q = n_kv * group
         self.scale = head_dim**-0.5
         self.splits, self.split_len = plan_splits(capacity, batch, n_kv)
+        self.block_n, self.warps, self.direct = _BLOCK_N, 4, False
+        if config is not None:
+            self.splits, self.block_n, self.warps = config
+            if self.splits not in (1, 2, 4, 8, 16, 32):
+                raise ValueError("attention splits must be a power of two up to 32")
+            self.split_len = triton.cdiv(triton.cdiv(capacity, self.splits), self.block_n) * self.block_n
+            self.direct = self.splits == 1
         self.pad_m = max(_PAD_M, triton.next_power_of_2(tokens * group))
 
         heads = batch * n_kv
@@ -177,16 +197,67 @@ class DecodeAttention:
             batch * tokens, self.n_q * head_dim, dtype=torch.bfloat16, device=device
         )
 
+    @torch.no_grad()
+    def tuned(self, keys, values, first_position, last_position, use_graph=True):
+        """Race a bounded set of layouts once, before capturing model decode.
+
+        Sweep every layer's cache at both ends of generation. Selection depends
+        on shape and measured hardware performance, never prompt acceptance or
+        a public-workload lookup table. Keep the incumbent within a 5% margin.
+        """
+        from .timing import time_calls
+
+        q = torch.randn(self.batch * self.tokens, self.n_q * self.head_dim,
+                        dtype=torch.bfloat16, device=self.out.device)
+        pos = torch.tensor([first_position], dtype=torch.int32, device=self.out.device)
+        operands = list(zip(keys, values))
+        positions = sorted(set((first_position, last_position)))
+        references = []
+        for value in positions:
+            pos.fill_(value)
+            references.append(self(q, *operands[0], pos).clone())
+
+        def measure(candidate):
+            elapsed = 0.0
+            for value, reference in zip(positions, references):
+                pos.fill_(value)
+                actual = candidate(q, *operands[0], pos)
+                if (not torch.isfinite(actual).all().item()
+                        or (actual.float() - reference.float()).abs().max().item() > 0.04):
+                    return float("inf")
+                elapsed += time_calls(lambda kv: candidate(q, *kv, pos), operands,
+                                      reps=1, trials=3, use_graph=use_graph)
+            return elapsed / len(positions)
+
+        incumbent = measure(self)
+        best, elapsed, chosen = self, incumbent, None
+        configs = [(1, 64, 4), (1, 128, 4), (2, 64, 4), (4, 64, 4),
+                   (4, 128, 4), (8, 64, 4), (8, 128, 4), (16, 64, 4)]
+        for config in configs:
+            candidate = DecodeAttention(self.batch, self.n_kv, self.group,
+                                        self.head_dim, self.capacity, self.out.device,
+                                        tokens=self.tokens, config=config)
+            trial = measure(candidate)
+            if trial < elapsed:
+                best, elapsed, chosen = candidate, trial, config
+        if elapsed > incumbent * 0.95:
+            best, elapsed, chosen = self, incumbent, None
+        print(f"engine: attention config={chosen or 'original'} "
+              f"{incumbent / elapsed:.2f}x vs original", file=sys.stderr)
+        return best
+
     def __call__(self, q, k_cache, v_cache, pos):
         """``q`` is ``[batch * tokens, n_q * head_dim]``; caches ``[batch, n_kv, cap, d]``."""
         heads = self.batch * self.n_kv
         _split_kernel[(heads, self.splits)](
-            q, k_cache, v_cache, pos, self.acc, self.peak, self.total, self.scale,
+            q, k_cache, v_cache, pos, self.acc, self.peak, self.total, self.out, self.scale,
             self.n_q,
             LMAX=self.capacity, SPLIT=self.split_len, SPLITS=self.splits,
-            GROUP=self.group, D=self.head_dim, BLOCK_N=_BLOCK_N, PAD_M=self.pad_m,
-            TOKENS=self.tokens, NKV=self.n_kv, num_warps=4,
+            GROUP=self.group, D=self.head_dim, BLOCK_N=self.block_n, PAD_M=self.pad_m,
+            TOKENS=self.tokens, NKV=self.n_kv, DIRECT=self.direct, num_warps=self.warps,
         )
+        if self.direct:
+            return self.out
         _merge_kernel[(heads, self.tokens)](
             self.acc, self.peak, self.total, self.out, self.n_q,
             SPLITS=self.splits, GROUP=self.group, D=self.head_dim,

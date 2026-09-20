@@ -1,0 +1,377 @@
+{
+  "started_at": "2026-09-20T00:08:57.389342+00:00",
+  "commit": "094942191795bcf3355c1acd4a3d24780f88d289",
+  "engine_sha256": "60b1c83b26dcdf5ee71356885c71692a0bae9b2dc971eff7f2e74fab44140493",
+  "stage": "profile",
+  "results": [
+    {
+      "batch": 1,
+      "context": 512,
+      "output": 32,
+      "prefill_wall_ms": 9.380309999997394,
+      "prefill_projection_gpu_ms": {
+        "qkv": 1.0864050000000152,
+        "o": 0.9430733333333347,
+        "gate_up": 3.1748813333333303,
+        "down": 1.9166333333333356,
+        "lm_head": 0.27759566666666674
+      },
+      "decode_wall_ms": 3.976289000000577,
+      "decode_projections": {
+        "qkv": {
+          "ms_all_layers": 0.5145279963811239,
+          "runner": "functools.partial(<function cuda_matmul at 0x2ba865d42340>, config=(256, 528, 2))"
+        },
+        "o": {
+          "ms_all_layers": 0.40481066703796387,
+          "runner": "functools.partial(<function cuda_matmul at 0x2ba865d42340>, config=(256, 264, 1))"
+        },
+        "gate_up": {
+          "ms_all_layers": 1.299285332361857,
+          "runner": "functools.partial(<function skinny_matmul at 0x2ba865d43740>, config=(16, 128, 4, 1))",
+          "with_swiglu_ms": 1.3899626731872559,
+          "fused_runner": "None"
+        },
+        "down": {
+          "ms_all_layers": 0.7821119626363118,
+          "runner": "functools.partial(<function skinny_matmul at 0x2ba865d43740>, config=(16, 256, 8, 4))"
+        },
+        "lm_head": {
+          "ms_all_layers": 0.26078933477401733,
+          "runner": "functools.partial(<function skinny_matmul at 0x2ba865d43740>, config=(16, 128, 4, 1))"
+        }
+      },
+      "attention_splits": 4,
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "torch": "2.5.1+cu124",
+      "prefill_profiler_events": [
+        {
+          "name": "aten::mm",
+          "ms": 7.193445333333349,
+          "calls": 145.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 6.895819666666682,
+          "calls": 144.0
+        },
+        {
+          "name": "projection/gate_up",
+          "ms": 3.1748813333333303,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/down",
+          "ms": 1.9166333333333356,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/qkv",
+          "ms": 1.0864050000000152,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/o",
+          "ms": 0.9430733333333347,
+          "calls": 36.0
+        },
+        {
+          "name": "aten::_flash_attention_forward",
+          "ms": 0.7681280000000084,
+          "calls": 36.0
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "ms": 0.7681280000000084,
+          "calls": 36.0
+        },
+        {
+          "name": "_swiglu_kernel",
+          "ms": 0.3099553333333191,
+          "calls": 36.0
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "ms": 0.28957300000000197,
+          "calls": 72.0
+        },
+        {
+          "name": "projection/lm_head",
+          "ms": 0.27759566666666674,
+          "calls": 1.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 0.270641333333333,
+          "calls": 1.0
+        },
+        {
+          "name": "_qkv_kernel",
+          "ms": 0.2702880000000038,
+          "calls": 36.0
+        },
+        {
+          "name": "cuLaunchKernel",
+          "ms": 0.21888999999999897,
+          "calls": 145.0
+        },
+        {
+          "name": "Memset (Device)",
+          "ms": 0.02770966666666997,
+          "calls": 38.0
+        },
+        {
+          "name": "aten::index_select",
+          "ms": 0.010026000000001053,
+          "calls": 1.0
+        }
+      ]
+    },
+    {
+      "batch": 4,
+      "context": 2048,
+      "output": 32,
+      "prefill_wall_ms": 122.96316699999466,
+      "prefill_projection_gpu_ms": {
+        "qkv": 13.030695333333334,
+        "o": 9.203205999999923,
+        "gate_up": 42.51704433333324,
+        "down": 20.63820000000005,
+        "lm_head": 0.2830803333333364
+      },
+      "decode_wall_ms": 4.724654000000328,
+      "decode_projections": {
+        "qkv": {
+          "ms_all_layers": 0.5467733144760132,
+          "runner": "<function _mm at 0x2b948c5c8040>"
+        },
+        "o": {
+          "ms_all_layers": 0.49478399753570557,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b948c59fec0>, config=(16, 128, 4, 4))"
+        },
+        "gate_up": {
+          "ms_all_layers": 1.3172372976938882,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b948c59fec0>, config=(32, 128, 4, 1))",
+          "with_swiglu_ms": 1.3914133707682292,
+          "fused_runner": "None"
+        },
+        "down": {
+          "ms_all_layers": 0.885269323984782,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b948c59fec0>, config=(16, 128, 4, 4))"
+        },
+        "lm_head": {
+          "ms_all_layers": 0.26712532838185626,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b948c59fec0>, config=(32, 128, 4, 1))"
+        }
+      },
+      "attention_splits": 8,
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "torch": "2.5.1+cu124",
+      "prefill_profiler_events": [
+        {
+          "name": "aten::mm",
+          "ms": 85.3521759999999,
+          "calls": 145.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 84.93044100000002,
+          "calls": 144.0
+        },
+        {
+          "name": "projection/gate_up",
+          "ms": 42.51704433333324,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/down",
+          "ms": 20.63820000000005,
+          "calls": 36.0
+        },
+        {
+          "name": "aten::_flash_attention_forward",
+          "ms": 20.266790999999948,
+          "calls": 36.0
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "ms": 20.266790999999948,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/qkv",
+          "ms": 13.030695333333334,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/o",
+          "ms": 9.203205999999923,
+          "calls": 36.0
+        },
+        {
+          "name": "_swiglu_kernel",
+          "ms": 5.797292666666729,
+          "calls": 36.0
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "ms": 3.8704529999999115,
+          "calls": 72.0
+        },
+        {
+          "name": "_qkv_kernel",
+          "ms": 3.6511770000000223,
+          "calls": 36.0
+        },
+        {
+          "name": "cuLaunchKernel",
+          "ms": 1.3852146666666412,
+          "calls": 145.0
+        },
+        {
+          "name": "projection/lm_head",
+          "ms": 0.2830803333333364,
+          "calls": 1.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 0.28025366666667106,
+          "calls": 1.0
+        },
+        {
+          "name": "Memset (Device)",
+          "ms": 0.1425053333332374,
+          "calls": 146.0
+        },
+        {
+          "name": "aten::index_select",
+          "ms": 0.13836666666666056,
+          "calls": 1.0
+        }
+      ]
+    },
+    {
+      "batch": 16,
+      "context": 512,
+      "output": 128,
+      "prefill_wall_ms": 113.24738700000125,
+      "prefill_projection_gpu_ms": {
+        "qkv": 13.191765000000036,
+        "o": 9.189665666666665,
+        "gate_up": 43.12354533333332,
+        "down": 20.91980733333331,
+        "lm_head": 0.28299266666667244
+      },
+      "decode_wall_ms": 4.660367000013821,
+      "decode_projections": {
+        "qkv": {
+          "ms_all_layers": 0.5536959966023763,
+          "runner": "<built-in function linear>"
+        },
+        "o": {
+          "ms_all_layers": 0.4880746603012085,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b7225a9fec0>, config=(16, 128, 4, 4))"
+        },
+        "gate_up": {
+          "ms_all_layers": 1.35369602839152,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b7225a9fec0>, config=(32, 128, 4, 1))",
+          "with_swiglu_ms": 1.4221653938293457,
+          "fused_runner": "None"
+        },
+        "down": {
+          "ms_all_layers": 0.8708159923553467,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b7225a9fec0>, config=(16, 128, 4, 4))"
+        },
+        "lm_head": {
+          "ms_all_layers": 0.2714773416519165,
+          "runner": "functools.partial(<function skinny_matmul at 0x2b7225a9fec0>, config=(32, 128, 4, 1))"
+        }
+      },
+      "attention_splits": 2,
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "torch": "2.5.1+cu124",
+      "prefill_profiler_events": [
+        {
+          "name": "aten::mm",
+          "ms": 86.37073766666663,
+          "calls": 145.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize128x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 85.9428943333333,
+          "calls": 144.0
+        },
+        {
+          "name": "projection/gate_up",
+          "ms": 43.12354533333332,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/down",
+          "ms": 20.91980733333331,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/qkv",
+          "ms": 13.191765000000036,
+          "calls": 36.0
+        },
+        {
+          "name": "projection/o",
+          "ms": 9.189665666666665,
+          "calls": 36.0
+        },
+        {
+          "name": "aten::_flash_attention_forward",
+          "ms": 7.663209000000014,
+          "calls": 36.0
+        },
+        {
+          "name": "void pytorch_flash::flash_fwd_kernel<pytorch_flash::Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, pytorch_flash::Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(pytorch_flash::Flash_fwd_params)",
+          "ms": 7.663209000000014,
+          "calls": 36.0
+        },
+        {
+          "name": "_swiglu_kernel",
+          "ms": 5.839430333333251,
+          "calls": 36.0
+        },
+        {
+          "name": "_add_rms_norm_kernel",
+          "ms": 3.868414333333358,
+          "calls": 72.0
+        },
+        {
+          "name": "_qkv_kernel",
+          "ms": 3.6263596666666547,
+          "calls": 36.0
+        },
+        {
+          "name": "cuLaunchKernel",
+          "ms": 1.2800099999999937,
+          "calls": 145.0
+        },
+        {
+          "name": "projection/lm_head",
+          "ms": 0.28299266666667244,
+          "calls": 1.0
+        },
+        {
+          "name": "sm90_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize64x128x64_warpgroupsize1x1x1_execute_segment_k_off_kernel__5x_cublas",
+          "ms": 0.28020866666667765,
+          "calls": 1.0
+        },
+        {
+          "name": "Memset (Device)",
+          "ms": 0.1487866666666414,
+          "calls": 146.0
+        },
+        {
+          "name": "aten::index_select",
+          "ms": 0.13673366666666212,
+          "calls": 1.0
+        }
+      ]
+    }
+  ]
+}

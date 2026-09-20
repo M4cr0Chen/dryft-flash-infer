@@ -268,6 +268,17 @@ def test_zero_output_does_no_work():
     assert list(engine.generate([[1, 2]], 0)) == []
 
 
+@pytest.mark.parametrize("rows", [3, 5, 9, 17])
+def test_cuda_mlp_rejects_unsupported_rows_before_launch(rows):
+    """Rounded-up CUDA specializations would read/write beyond these buffers."""
+    from kernels.cuda_mlp import gate_up_swiglu
+
+    x = torch.empty(rows, 8, dtype=torch.bfloat16)
+    w = torch.empty(16, 8, dtype=torch.bfloat16)
+    with pytest.raises(ValueError, match="requires 1, 2, 4, 8, or 16 rows"):
+        gate_up_swiglu(x, w)
+
+
 def test_mlp_fusion_must_beat_selected_projection(monkeypatch):
     """Beating plain cuBLAS must not replace an even faster selected runner."""
     from types import SimpleNamespace

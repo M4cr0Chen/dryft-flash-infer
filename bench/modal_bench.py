@@ -59,6 +59,9 @@ image = (
     .add_local_file("bench/gpu_checks.py", "/root/gpu_checks.py")
     .add_local_file("bench/probe_kernels.py", "/root/probe_kernels.py")
     .add_local_file("bench/coop_probe.py", "/root/coop_probe.py")
+    .add_local_file("bench/study.py", "/root/study.py")
+    .add_local_file("bench/short_spec.py", "/root/short_spec.py")
+    .add_local_file("OPTIMIZATION_GUIDE.md", "/root/technical.txt")
 )
 
 # Optional checkout for paired comparisons on the same physical GPU. It is
@@ -69,6 +72,54 @@ if BASELINE_DIR:
 
 weights = modal.Volume.from_name("dryft-qwen3-4b", create_if_missing=True)
 app = modal.App("dryft-engine")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def study_remote(stage: str = "profile"):
+    """Run a bounded investigation in fresh processes on the same H100."""
+    import json
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    rows = []
+    shapes = ([(1, 512, 32), (1, 2048, 32), (1, 512, 128)]
+              if stage == "speculation" else [(1, 512, 32), (4, 2048, 32), (16, 512, 128)])
+    for batch, context, output in shapes:
+        result = subprocess.run(
+            [sys.executable, "/root/study.py", stage, str(batch), str(context), str(output)],
+            text=True, stdout=subprocess.PIPE, check=True,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("RESULT_JSON="):
+                rows.append(json.loads(line.removeprefix("RESULT_JSON=")))
+            else:
+                print(line, flush=True)
+    return rows
+
+
+@app.local_entrypoint()
+def study(stage: str = "profile", output: str = "bench/results/study.json"):
+    import hashlib
+    import json
+    import subprocess
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    digest = hashlib.sha256()
+    for path in sorted(Path("engine").rglob("*.py")):
+        digest.update(path.relative_to("engine").as_posix().encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    result = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "engine_sha256": digest.hexdigest(), "stage": stage,
+        "results": study_remote.remote(stage),
+    }
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, indent=2) + "\n")
+    print(f"Results saved to {path}")
 
 
 @app.function(image=image, volumes={"/weights": weights}, timeout=3600)
@@ -129,10 +180,11 @@ def compare_benchmark(samples: int = 5, corpus: bool = True):
         raise ValueError("baseline engine was not mounted; set DRYFT_BASELINE_DIR locally")
     sys.path.insert(0, "/root")
     from harness import PUBLIC_SHAPES, run_isolated
-    from gpu_checks import check_rope_fusion
+    from gpu_checks import check_rope_fusion, check_attention_dispatch
 
     _describe_gpu(require_h100=True)
     check_rope_fusion()
+    check_attention_dispatch()
     os.environ["DRYFT_FP8"] = "off"
     results = {"baseline": [], "candidate": []}
     for index, shape in enumerate(PUBLIC_SHAPES):

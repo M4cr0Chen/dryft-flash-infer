@@ -45,6 +45,8 @@ PREFILL_ROW_BUDGET = 32768
 #: call in fixed overhead regardless of how little cache it reads, which is 36
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
 TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
+#: Opt-in until whole-generation measurements resolve the small dispatch gain.
+TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "off") == "on"
 
 #: The published rules require BF16. Keep the historical quantization
 #: experiment opt-in; its small sampled logit gaps are not a correctness proof.
@@ -418,6 +420,11 @@ class Engine:
             self.batch, self.seq_len, dtype=torch.int64, device=self.device
         )
         self._prefill(dummy)
+        if self.decode_attention is not None and TUNE_ATTENTION:
+            self.decode_attention = self.decode_attention.tuned(
+                self.k_cache, self.v_cache, self.seq_len,
+                self.capacity - CAPACITY_SLACK - 1, use_graph=USE_GRAPH,
+            )
         step = self._spec_step if self.draft else self._decode_step
         for _ in range(2):
             step()

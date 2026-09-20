@@ -40,3 +40,47 @@ def check_rope_fusion():
                 if not torch.equal(actual, expected):
                     raise AssertionError(f"fused {label} differs at batch={batch}, tokens={length}")
     print("GPU Q/K/V fusion: bit-exact against separate Triton kernels on all 6 cases", flush=True)
+
+
+def check_attention_dispatch():
+    """Check causal boundaries, empty partitions and direct output against SDPA."""
+    import sys
+    import torch
+    import torch.nn.functional as F
+
+    sys.path.insert(0, "/root/engine")
+    from kernels.attention import DecodeAttention
+
+    torch.manual_seed(47)
+    cases, worst = 0, 0.0
+    for batch in (1, 4):
+        for tokens in (1, 2, 3):
+            capacity, n_kv, group, dim = 521, 8, 4, 128
+            q = torch.randn(batch * tokens, n_kv * group * dim,
+                            device="cuda", dtype=torch.bfloat16)
+            keys = torch.randn(batch, n_kv, capacity, dim, device="cuda", dtype=torch.bfloat16)
+            values = torch.randn_like(keys)
+            for first in (0, 127, capacity - tokens):
+                position = torch.tensor([first], device="cuda", dtype=torch.int32)
+                k, v = keys.clone(), values.clone()
+                k[:, :, first + tokens:] = float("nan")
+                v[:, :, first + tokens:] = float("nan")
+                # Slice away the poisoned suffix in the independent reference.
+                mask = (torch.arange(first + tokens, device="cuda")[None, :]
+                        <= first + torch.arange(tokens, device="cuda")[:, None])
+                reference = F.scaled_dot_product_attention(
+                    q.view(batch, tokens, n_kv * group, dim).transpose(1, 2),
+                    keys[:, :, :first + tokens].repeat_interleave(group, 1),
+                    values[:, :, :first + tokens].repeat_interleave(group, 1),
+                    attn_mask=mask,
+                ).transpose(1, 2).reshape(batch * tokens, -1)
+                for config in ((1, 64, 4), (4, 128, 4), (16, 64, 4)):
+                    attention = DecodeAttention(batch, n_kv, group, dim, capacity,
+                                                "cuda", tokens=tokens, config=config)
+                    actual = attention(q, k, v, position)
+                    error = (actual.float() - reference.float()).abs().max().item()
+                    if not torch.isfinite(actual).all() or error > 0.04:
+                        raise AssertionError(f"attention {batch=} {tokens=} {first=} {config=}: {error}")
+                    worst = max(worst, error)
+                    cases += 1
+    print(f"GPU attention: {cases} causal/boundary cases passed; max SDPA error={worst}", flush=True)
