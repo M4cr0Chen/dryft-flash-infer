@@ -446,3 +446,47 @@ def check_int4():
         torch.cuda.empty_cache()
     print(f"GPU INT4: {cases} projection/plane/SwiGLU cases passed; max relative error={worst:.2e}",
           flush=True)
+
+
+def check_cuda_small():
+    """The CUDA small kernels against the Triton ones they replace."""
+    import sys
+    import torch
+
+    sys.path.insert(0, "/root/engine")
+    from kernels import cuda_small
+    from kernels.norm import add_rms_norm_partials_separate, rms_norm
+    from kernels.swiglu import swiglu_partials
+
+    if not cuda_small.ready():
+        raise AssertionError("cuda_small did not compile")
+    torch.manual_seed(29)
+    cases, worst = 0, 0
+    for rows in (1, 3, 4, 8, 16, 17, 32, 64):
+        for n, splits in ((2560, 1), (2560, 4), (2560, 8), (2560, 16)):
+            x = torch.randn(rows, n, dtype=torch.bfloat16, device="cuda")
+            planes = torch.randn(splits, rows, n, dtype=torch.float32, device="cuda")
+            w = 1.0 + 0.1 * torch.randn(n, dtype=torch.bfloat16, device="cuda")
+            r0, y0 = add_rms_norm_partials_separate(x, planes, w, 1e-6)
+            r1, y1 = cuda_small.add_rms_norm_partials_separate(x, planes, w, 1e-6)
+            if not torch.equal(r0, r1):
+                raise AssertionError(f"residual_partials differs at rows={rows} splits={splits}")
+            ulps = ((y0.view(torch.int16).int() - y1.view(torch.int16).int()).abs()).max().item()
+            worst = max(worst, ulps)
+            if ulps > 1:
+                raise AssertionError(f"rms_norm differs by {ulps} ulps at rows={rows} splits={splits}")
+            y2 = cuda_small.rms_norm(x, w, 1e-6)
+            ulps = ((rms_norm(x, w, 1e-6).view(torch.int16).int() - y2.view(torch.int16).int()).abs()).max().item()
+            worst = max(worst, ulps)
+            if ulps > 1:
+                raise AssertionError(f"rms_norm (plain) differs by {ulps} ulps at rows={rows}")
+            cases += 2
+        for splits in (1, 4, 8):
+            planes = torch.randn(splits, rows, 2 * 9728, dtype=torch.float32, device="cuda")
+            a, b = swiglu_partials(planes), cuda_small.swiglu_partials(planes)
+            ulps = ((a.view(torch.int16).int() - b.view(torch.int16).int()).abs()).max().item()
+            worst = max(worst, ulps)
+            if ulps > 1:
+                raise AssertionError(f"partial_swiglu differs by {ulps} ulps at rows={rows} splits={splits}")
+            cases += 1
+    print(f"GPU CUDA small kernels: {cases} cases passed; worst difference {worst} bf16 ulp", flush=True)

@@ -2,6 +2,72 @@
 
 Not submitted. What was measured, what it cost, and what it bought.
 
+## Programmatic dependent launch across the decode chain, September 20
+
+Starting point: `74fac05` (engine of the ranked 1212.1). A decode layer is
+ten launches: five GEMMs and five small kernels (RMSNorm, split-K residual
+sum, RoPE, attention, split-K SwiGLU). The small ones move a few megabytes
+and cost 2-4 us each; with the gaps they were 640 us of a 3.5 ms step at
+batch 16 and 24% of the step at batch 1. Per-kernel fixed cost, not bytes.
+
+### The mechanism, verified first
+
+Hopper's programmatic dependent launch lets a kernel launched with the
+programmatic-serialization attribute start while its predecessor runs; it
+executes `griddepcontrol.wait` before touching the predecessor's output, and
+the predecessor executes `griddepcontrol.launch_dependents` to release it.
+`cuda_jit.Kernel.launch_ex` issues `cuLaunchKernelEx` with attribute 6; it
+captures into CUDA graphs as a programmatic edge (driver 13000 here).
+`bench/pdl_diag.py`: two 50 us kernels, serial 105 us; PDL with the trigger at
+the end 105 us; PDL with the trigger at entry **54 us**, eager and graphed.
+Trigger placement is everything. Two bugs on the way: attribute id 5 is the
+cluster scheduling policy (6 is programmatic serialization), and a `c_char`
+struct field reads back as a copy, so the value has to be written through
+its address.
+
+### In the engine
+
+The GEMM kernels take `@PDL@`: 1 triggers before the epilogue, 2 at entry;
+both wait after issuing their first weight loads and before staging the
+activation. `kernels/cuda_small.py` re-implements RMSNorm, the residual plane
+sum and the plane SwiGLU as CUDA driver launches with the same hooks; the
+residual sum and SwiGLU are bit-exact with the Triton kernels, RMSNorm is
+within one bf16 ulp (`check_cuda_small`, 112 cases). RoPE and attention stay
+Triton and outside the chain for now. `DRYFT_PDL=early|late|off`,
+`DRYFT_CUDA_SMALL` follows it.
+
+`bench/pdl_probe.py`, a chain of 72 dependent GEMMs plus reduce in a graph:
+late trigger saves 0.7-0.9 us per pair; with a non-PDL Triton kernel between
+GEMMs the early trigger saves about 1 us per GEMM, the late one 0.3.
+
+Paired, fresh processes, five corpus samples, both engines INT8 with the
+native INT8 MLP, order alternating (`paired-pdl-late-20260920.json`,
+`paired-pdl-early-20260920.json`):
+
+| Shape | Baseline | Late trigger | Early trigger |
+| --- | ---: | ---: | ---: |
+| public-0, 1 x 512 -> 32 | 325.5 | 330.7 (+1.6%) | 338.4 (+4.0%) |
+| public-1, 4 x 2048 -> 32 | 588 | 603.3 (+2.2%) | 598.9 (+2.3%) |
+| public-2, 16 x 512 -> 128 | 3640 | 3790.0 (+3.9%) | 3790.5 (+4.3%) |
+| 1 x 4096 -> 65 | 265.6 | 275.7 (+3.7%) | 274.5 (+3.5%) |
+| geomean | | +2.8% | **+3.5%** |
+
+Every sample passes; tie gaps are unchanged or lower. Load plus warmup is
+15-22 s. The batch-16 step went 3.508 -> 3.346 ms; the trace's "gap" turns
+negative (-339 us) because kernels now overlap, and per-kernel times inflate
+with the time spent in `griddepcontrol.wait`, so the step wall is the number
+to read. Early trigger is the default.
+
+### Left in this pool
+
+RoPE (36 launches, 127 us) and attention (36, 600 us) are Triton and break
+the chain twice per layer: the GEMM after each launches only when it
+completes. Pulling them in needs either Triton's compiled `CUfunction`
+launched through `launch_ex` with `griddepcontrol` via inline asm, or CUDA
+ports. The two-phase norm fusion (producer writes residual plus partial
+sum of squares, consumer normalises while staging) would remove the RMSNorm
+launches outright and stacks with this.
+
 ## Below eight bits: a 4-bit kernel that works and a margin that does not, September 20
 
 Starting point: `31bf1c0`, official 1212.1 tok/s. The question was whether

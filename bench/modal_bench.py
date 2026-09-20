@@ -62,6 +62,8 @@ image = (
     .add_local_file("bench/fused_probe.py", "/root/fused_probe.py")
     .add_local_file("bench/latency_probe.py", "/root/latency_probe.py")
     .add_local_file("bench/int4_probe.py", "/root/int4_probe.py")
+    .add_local_file("bench/pdl_probe.py", "/root/pdl_probe.py")
+    .add_local_file("bench/pdl_diag.py", "/root/pdl_diag.py")
     .add_local_file("bench/gemm_bisect.py", "/root/gemm_bisect.py")
     .add_local_file("bench/tiled_probe.py", "/root/tiled_probe.py")
     .add_local_file("bench/spec_trace.py", "/root/spec_trace.py")
@@ -193,7 +195,8 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
                       candidate_fp8: str = "on", short_draft: int = 2,
                       long_context: bool = False, candidate_kv: str = "bf16",
                       baseline_fp8: str = "off", candidate_int8_mma: str = "off",
-                      baseline_int8_mma: str = "off", candidate_int4: str = ""):
+                      baseline_int8_mma: str = "off", candidate_int4: str = "",
+                      candidate_pdl: str = "off"):
     """Alternate old/new order across workloads, on one physical H100."""
     import os
     import sys
@@ -205,6 +208,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
     from harness import PUBLIC_SHAPES, run_isolated
     from gpu_checks import (check_rope_fusion, check_attention_dispatch, check_fp8,
                             check_fp8_mma, check_kv_int8, check_fused_add_norm, check_int4,
+                            check_cuda_small,
                             check_separate_decode_norm, check_partial_swiglu)
 
     _describe_gpu(require_h100=True)
@@ -219,6 +223,10 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
         check_fused_add_norm()
         if candidate_int4:
             check_int4()
+        if candidate_pdl != "off":
+            os.environ["DRYFT_PDL"] = candidate_pdl
+            check_cuda_small()
+            os.environ["DRYFT_PDL"] = "off"
     results = {"baseline": [], "candidate": []}
     shapes = list(PUBLIC_SHAPES)
     if long_context:
@@ -230,6 +238,7 @@ def compare_benchmark(samples: int = 5, corpus: bool = True,
             os.environ["DRYFT_KV"] = candidate_kv if label == "candidate" else "bf16"
             os.environ["DRYFT_INT8_MMA"] = candidate_int8_mma if label == "candidate" else baseline_int8_mma
             os.environ["DRYFT_INT4_PROJECTIONS"] = candidate_int4 if label == "candidate" else ""
+            os.environ["DRYFT_PDL"] = candidate_pdl if label == "candidate" else "off"
             os.environ["DRYFT_SHORT_DRAFT"] = str(short_draft)
             print(f"\nPAIRED BENCHMARK: {shape[0]} / {label} / "
                   f"FP8={os.environ['DRYFT_FP8']} short={os.environ['DRYFT_SHORT_DRAFT']}", flush=True)
@@ -247,7 +256,7 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
             candidate_fp8: str = "on", short_draft: int = 2,
             long_context: bool = False, candidate_kv: str = "bf16", baseline_fp8: str = "off",
             candidate_int8_mma: str = "off", baseline_int8_mma: str = "off",
-            candidate_int4: str = ""):
+            candidate_int4: str = "", candidate_pdl: str = "off"):
     import hashlib
     import json
     import subprocess
@@ -276,6 +285,7 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
         "candidate_int8_mma": candidate_int8_mma,
         "baseline_int8_mma": baseline_int8_mma,
         "candidate_int4": candidate_int4,
+        "candidate_pdl": candidate_pdl,
         "long_context": long_context,
     }
     results = compare_benchmark.remote(samples=samples, corpus=corpus,
@@ -283,7 +293,7 @@ def compare(samples: int = 5, corpus: bool = True, output: str = "bench/results/
                                        long_context=long_context, candidate_kv=candidate_kv,
                                        baseline_fp8=baseline_fp8, candidate_int8_mma=candidate_int8_mma,
                                        baseline_int8_mma=baseline_int8_mma,
-                                       candidate_int4=candidate_int4)
+                                       candidate_int4=candidate_int4, candidate_pdl=candidate_pdl)
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**metadata, **results}, indent=2) + "\n")
@@ -574,11 +584,14 @@ def _forced(backend, q, k, v, mask):
 @app.function(
     image=image, **_GPU, volumes={"/weights": weights}, timeout=3600
 )
-def trace(batch: int = 1, context: int = 512):
+def trace(batch: int = 1, context: int = 512, pdl: str = "off"):
     """Per-kernel time inside one graphed decode step, and the gap around it."""
+    import os
     import sys
     import time
     from collections import defaultdict
+
+    os.environ["DRYFT_PDL"] = pdl
 
     import torch
     from torch.profiler import ProfilerActivity, profile
@@ -1694,6 +1707,34 @@ def kv_checks():
 
 
 @app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=1800)
+def pdl_diag():
+    """Whether programmatic dependent launch engages on this driver, eager and graphed."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/pdl_diag.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-4000:], flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
+def pdl_probe():
+    """Programmatic dependent launch on a chain of our GEMMs, in a fresh process."""
+    import subprocess
+    import sys
+
+    _describe_gpu(require_h100=True)
+    result = subprocess.run([sys.executable, "/root/pdl_probe.py"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout[-6000:], flush=True)
+    if result.returncode:
+        raise RuntimeError(f"probe exited {result.returncode}")
+
+
+@app.function(image=image, **_GPU, volumes={"/weights": weights}, timeout=3600)
 def int4_probe(batches: str = "1,4,16,32"):
     """4-bit against 8-bit decode weights per projection, correctness first, in a fresh process."""
     import subprocess

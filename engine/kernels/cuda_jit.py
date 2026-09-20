@@ -125,16 +125,30 @@ class Module:
         return self._kernels[name]
 
 
+class _LaunchAttribute(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_int), ("pad", ctypes.c_int), ("value", ctypes.c_char * 64)]
+
+
+class _LaunchConfig(ctypes.Structure):
+    _fields_ = [
+        ("gridDimX", ctypes.c_uint), ("gridDimY", ctypes.c_uint), ("gridDimZ", ctypes.c_uint),
+        ("blockDimX", ctypes.c_uint), ("blockDimY", ctypes.c_uint), ("blockDimZ", ctypes.c_uint),
+        ("sharedMemBytes", ctypes.c_uint), ("hStream", ctypes.c_void_p),
+        ("attrs", ctypes.c_void_p), ("numAttrs", ctypes.c_uint),
+    ]
+
+
 class Kernel:
     """One launchable kernel. Arguments are tensors and 32-bit ints."""
 
-    __slots__ = ("_handle", "name", "_shared", "_keep")
+    __slots__ = ("_handle", "name", "_shared", "_keep", "pdl")
 
     def __init__(self, handle, name):
         self._handle = handle
         self.name = name
         self._shared = 0
         self._keep = None
+        self.pdl = False
 
     def set_shared(self, nbytes: int) -> None:
         """Opt in to more than 48 KiB of shared memory, as Hopper allows."""
@@ -201,9 +215,51 @@ class Kernel:
             f"cuLaunchCooperativeKernel({self.name})",
         )
 
+    # ``pdl`` (a slot, set in __init__): launch with programmatic stream
+    # serialization, so the kernel may begin while the previous kernel on the
+    # stream is still running; it must then execute ``griddepcontrol.wait``
+    # before reading anything that kernel writes.
+
+    def launch_2d(self, grid_x, grid_y, block, *args):
+        """A two-dimensional grid, programmatic when ``pdl`` is set."""
+        if self.pdl:
+            return self.launch_ex((grid_x, grid_y), block, *args, pdl=True)
+        return self.launch_ex((grid_x, grid_y), block, *args, pdl=False)
+
+    def launch_ex(self, grid, block, *args, pdl: bool = True):
+        """``cuLaunchKernelEx`` with the programmatic-serialization attribute.
+
+        Captures into CUDA graphs as a programmatic edge (CUDA 12.3+).
+        ``grid`` is an int or an ``(x, y)`` pair.
+        """
+        import torch
+
+        if isinstance(grid, int):
+            grid = (grid, 1)
+        array = self._pack(args)
+        stream = torch.cuda.current_stream().cuda_stream
+        attrs = (_LaunchAttribute * 1)()
+        attrs[0].id = 6   # CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION
+        # The union's first int is programmaticStreamSerializationAllowed. A
+        # c_char field reads back as a copy, so write through the address.
+        ctypes.c_int.from_address(ctypes.addressof(attrs[0]) + _LaunchAttribute.value.offset).value = 1 if pdl else 0
+        config = _LaunchConfig()
+        config.gridDimX, config.gridDimY, config.gridDimZ = grid[0], grid[1], 1
+        config.blockDimX, config.blockDimY, config.blockDimZ = block, 1, 1
+        config.sharedMemBytes = self._shared
+        config.hStream = ctypes.c_void_p(stream)
+        config.attrs = ctypes.cast(attrs, ctypes.c_void_p)
+        config.numAttrs = 1
+        _check(
+            _driver.cuLaunchKernelEx(ctypes.byref(config), self._handle, array, None),
+            f"cuLaunchKernelEx({self.name})",
+        )
+
     def __call__(self, grid, block, *args):
         import torch
 
+        if self.pdl:
+            return self.launch_ex(grid, block, *args, pdl=True)
         packed = []
         keep = []
         for arg in args:

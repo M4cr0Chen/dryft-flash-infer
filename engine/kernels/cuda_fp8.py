@@ -44,6 +44,10 @@ from . import cuda_jit
 #: contiguous 2 KB tile, so every warp load instruction reads a contiguous 512
 #: bytes. Bit-exact with row-major; measured 2-11% faster per projection.
 TILED = os.environ.get("DRYFT_TILED", "on") == "on"
+#: Build the kernels with griddepcontrol wait/trigger and launch them with the
+#: programmatic-serialization attribute, so a GEMM's weight loads are in
+#: flight while the previous kernel in the stream finishes.
+PDL = {"off": 0, "late": 1, "on": 2, "early": 2}[os.environ.get("DRYFT_PDL", "early")]
 
 #: Values per scale. One scale covers one 64-wide block of the weight, which
 #: is exactly what a lane's two 16-byte loads cover in a K step.
@@ -140,6 +144,28 @@ __device__ __forceinline__ void cp_commit() {
 }
 #define CP_WAIT_PENDING(n) asm volatile("cp.async.wait_group %0;" :: "n"(n) : "memory")
 
+// Programmatic dependent launch. PDL_WAIT blocks until every kernel this one
+// depends on has completed and flushed; PDL_TRIGGER lets the next kernel in
+// the stream begin its own prologue. Both are no-ops when not launched with
+// the programmatic attribute, so a kernel built with @PDL@ runs either way.
+// @PDL@ 0: no hooks. 1: trigger before the epilogue. 2: trigger at entry, so
+// the next kernel's prologue (its own weight loads) overlaps this kernel's
+// whole body; its wait still holds it back from reading our output.
+#if @PDL@
+#define PDL_WAIT() asm volatile("griddepcontrol.wait;" ::: "memory")
+#define PDL_TRIGGER() asm volatile("griddepcontrol.launch_dependents;" ::: "memory")
+#else
+#define PDL_WAIT()
+#define PDL_TRIGGER()
+#endif
+#if @PDL@ == 2
+#define PDL_TRIGGER_EARLY() PDL_TRIGGER()
+#define PDL_TRIGGER_LATE()
+#else
+#define PDL_TRIGGER_EARLY()
+#define PDL_TRIGGER_LATE() PDL_TRIGGER()
+#endif
+
 """
 
 _HEAD = r"""
@@ -153,6 +179,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
        const bf16* __restrict__ X, void* __restrict__ OUT,
        int N, int K, int B, int G, int GPS, int SPLITK)
 {
+    PDL_TRIGGER_EARLY();
     extern __shared__ __align__(16) bf16 xs[];
     const int split = blockIdx.x % SPLITK;
     const int rowblock = blockIdx.x / SPLITK;
@@ -216,6 +243,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
         sc[p][0] = ok ? s_lo[g_begin + p] : 0u;
         sc[p][1] = ok ? s_hi[g_begin + p] : 0u;
     }
+    PDL_WAIT();
 """
 
 _STAGING = r"""
@@ -366,6 +394,7 @@ _BODY = r"""
 """
 
 _EPILOGUE = r"""
+    PDL_TRIGGER_LATE();
 #if @MODE@ == 0
     bf16* out = reinterpret_cast<bf16*>(OUT);
     #pragma unroll
@@ -428,6 +457,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
        const bf16* __restrict__ X, void* __restrict__ OUT,
        int N, int K, int B, int G, int GPS, int SPLITK)
 {
+    PDL_TRIGGER_EARLY();
     extern __shared__ __align__(16) bf16 xs[];
     const int split = blockIdx.x % SPLITK;
     const int rowblock = blockIdx.x / SPLITK;
@@ -501,6 +531,7 @@ extern "C" __global__ void __launch_bounds__(@THREADS@)
         }
         cp_commit();
     }
+    PDL_WAIT();
 """
 
 _RING_BODY = r"""
@@ -860,9 +891,12 @@ extern "C" __global__ void reduce_partials(const float* __restrict__ P,
                                            int width, int splits)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    PDL_TRIGGER_EARLY();
+    PDL_WAIT();
     if (i >= width) return;
     float acc = 0.f;
     for (int s = 0; s < splits; ++s) acc += P[(size_t)s * width + i];
+    PDL_TRIGGER_LATE();
     unsigned int u = __float_as_uint(acc);
     unsigned int round = ((u >> 16) & 1u) + 0x7fffu;
     OUT[i] = (unsigned short)((u + round) >> 16);
@@ -888,6 +922,7 @@ def _substitute(template: str, **values) -> str:
     bits = values.get("BITS", 8)
     tiled = values.get("TILED", 0)
     values = dict(values)
+    values.setdefault("PDL", int(PDL))
     values.setdefault("TILE", 2048 if bits == 8 else 1024)     # bytes per warp per group, tiled
     values.setdefault("CHUNKS", 2 if bits == 8 else 1)          # 16-byte lane chunks per group
     values.setdefault("NCOPY", (values["TILE"] // 512) if tiled else 4)
@@ -917,7 +952,7 @@ def _ring_source(nt: int, ring: int, tiled: bool, bits: int = 8) -> str:
 
 def _ring_module(nt: int, ring: int, tiled: bool = None, bits: int = 8):
     tiled = TILED if tiled is None else tiled
-    key = ("ring", nt, ring, tiled, bits)
+    key = ("ring", nt, ring, tiled, bits, PDL)
     if key not in _modules:
         _modules[key] = cuda_jit.Module(_ring_source(nt, ring, tiled, bits))
     return _modules[key]
@@ -977,7 +1012,7 @@ def _fused_module(warps: int, nt: int, stage: int, tail: int = 1):
 
 def _module_for(nt: int, nshare: int = 1, tiled: bool = None, bits: int = 8):
     tiled = TILED if tiled is None else tiled
-    key = (nt, nshare, tiled, bits)
+    key = (nt, nshare, tiled, bits, PDL)
     if key not in _modules:
         _modules[key] = cuda_jit.Module(_source(nt, nshare, tiled, bits))
     return _modules[key]
@@ -1166,6 +1201,7 @@ def _launch(mode, prepared, x, out, n_eff, config):
         kernel = _module_for(nt, nshare, prepared.tiled, prepared.bits).kernel(
             _name(warps, nt, mode, stage, nshare, 0, prepared.tiled, prepared.bits))
     kernel.set_shared(_shared_bytes(nt, gps, nshare, warps, ring, prepared.bits) if stage else 0)
+    kernel.pdl = bool(PDL)
     kernel(rowblocks * splitk, warps * 32,
            prepared.weight, prepared.scale, x, out,
            n_eff, k, batch, prepared.groups, gps, splitk)
@@ -1198,6 +1234,7 @@ def matmul(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:
     _launch(1, prepared, x, partial, prepared.rows, (warps, splitk, stage, nshare, ring))
     width = batch * prepared.rows
     reduce = _module_for(_NTS[0], 1).kernel("reduce_partials")
+    reduce.pdl = bool(PDL)
     reduce(-(-width // 256), 256, partial, out, width, splitk)
     return out
 

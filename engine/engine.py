@@ -96,6 +96,15 @@ FUSE_ROPE = os.environ.get("DRYFT_FUSE_ROPE", "on") == "on"
 #: activation packing keep their combined kernels. Set to "fused" to compare.
 SEPARATE_DECODE_NORM = os.environ.get("DRYFT_DECODE_NORM", "separate") == "separate"
 PARTIAL_SWIGLU = os.environ.get("DRYFT_PARTIAL_SWIGLU", "on") == "on"
+#: The small decode kernels (RMSNorm, split-K residual sum, split-K SwiGLU) as
+#: CUDA driver launches, which lets them join the programmatic-dependent-launch
+#: chain with the GEMMs (DRYFT_PDL). Default follows DRYFT_PDL.
+CUDA_SMALL = os.environ.get("DRYFT_CUDA_SMALL",
+                            "on" if os.environ.get("DRYFT_PDL", "early") != "off" else "off") == "on"
+try:
+    from kernels import cuda_small
+except Exception:   # pragma: no cover - CPU test environments
+    cuda_small = None
 
 #: Fold the residual add and RMSNorm into the o and down GEMMs' last block.
 #: Measured: the one block doing the norm for the batch is latency-bound at
@@ -722,6 +731,10 @@ class Engine:
         print(f"engine: {name:8s} add-norm fused={chosen}  {split_ms / best:.2f}x vs planes",
               file=sys.stderr)
 
+    def _cuda_small(self) -> bool:
+        """Whether the CUDA versions of the small decode kernels are in use."""
+        return bool(CUDA_SMALL and self.cuda and cuda_small is not None and cuda_small.ready())
+
     def _choose_mlp(self, batch: int, family: str = "bf16") -> None:
         """Race the fused gate/up+SwiGLU kernel against running them apart.
 
@@ -777,8 +790,10 @@ class Engine:
         if PARTIAL_SWIGLU and family == "fp8":
             config = getattr(projection, "keywords", {}).get("config")
             if config is not None and cuda_fp8.splits(operands[0], batch, config) > 1:
+                consume = cuda_small.swiglu_partials if self._cuda_small() else swiglu_partials
+
                 def consume_planes(a, w, c=config):
-                    return swiglu_partials(cuda_fp8.matmul_partials(a, w, c))
+                    return consume(cuda_fp8.matmul_partials(a, w, c))
                 expected = swiglu(projection(x, self.operand['gate_up'][0]))
                 actual = consume_planes(x, operands[0])
                 if torch.equal(expected, actual):
@@ -830,6 +845,10 @@ class Engine:
         """
         separate_norm = SEPARATE_DECODE_NORM and matmul is not None
         add_norm_partials = add_rms_norm_partials_separate if separate_norm else add_rms_norm_partials
+        first_norm = rms_norm
+        if separate_norm and self._cuda_small():
+            add_norm_partials = cuda_small.add_rms_norm_partials_separate
+            first_norm = cuda_small.rms_norm
 
         def project(name, index, source, fallback):
             if matmul:
@@ -868,7 +887,7 @@ class Engine:
             cache_kwargs["k_copy"] = self.k_copy[:batch] if prefill else None
             cache_kwargs["v_copy"] = self.v_copy[:batch] if prefill else None
 
-        normed = rms_norm(x, self.layers[0].norm_in, self.eps)
+        normed = first_norm(x, self.layers[0].norm_in, self.eps)
         for index, layer in enumerate(self.layers):
             kc = self.k_cache[index].narrow(0, offset, batch)
             vc = self.v_cache[index].narrow(0, offset, batch)
