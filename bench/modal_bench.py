@@ -1622,8 +1622,8 @@ def variants(shape: str = "public-2", samples: int = 5,
         print(f"\nVARIANT {label}: {env}", flush=True)
         rows[label] = run_isolated(WEIGHTS, shapes=chosen, samples=samples,
                                    corpus="/root/corpus.txt")[0]
-    print("\nvariant                    tok/s   worst gap  per-sample gaps")
+    print("\nvariant                    tok/s   worst gap  load+warmup  per-sample gaps")
     for label, row in rows.items():
         gaps = " ".join(f"{s['tie_gap']:.3f}" for s in row["sample_metrics"])
-        print(f"{label:24s} {row['tps']:8.1f}  {row['tie_gap']:8.4f}  {gaps}", flush=True)
+        print(f"{label:24s} {row['tps']:8.1f}  {row['tie_gap']:8.4f}  {row['load_warmup_seconds']:9.1f}s  {gaps}", flush=True)
     return rows

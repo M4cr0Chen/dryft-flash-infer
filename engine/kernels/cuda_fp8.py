@@ -379,34 +379,46 @@ def _name(warps: int, nt: int, mode: int, stage: int = 1) -> str:
     return f"fp8_mma_w{warps}_n{nt}_m{mode}_s{stage}"
 
 
-def _source() -> str:
-    parts = [_PRELUDE, _REDUCE]
+def _source(nt: int) -> str:
+    """Every warp count and epilogue for one activation tile count.
+
+    A process serves one batch size (plus its verification widths, which
+    share the tile count up to eight rows), so compiling the other tile counts
+    would spend load budget on kernels that never launch.
+    """
+    parts = [_PRELUDE]
+    if nt == _NTS[0]:
+        parts.append(_REDUCE)
     for warps in _WARPS:
-        for nt in _NTS:
-            for mode in _MODES:
-                for stage in _STAGES:
-                    parts.append(
-                        _TEMPLATE.replace("@NAME@", _name(warps, nt, mode, stage))
-                        .replace("@WARPS@", str(warps))
-                        .replace("@THREADS@", str(warps * 32))
-                        .replace("@NT@", str(nt))
-                        .replace("@MODE@", str(mode))
-                        .replace("@STAGE@", str(stage))
-                    )
+        for mode in _MODES:
+            for stage in _STAGES:
+                parts.append(
+                    _TEMPLATE.replace("@NAME@", _name(warps, nt, mode, stage))
+                    .replace("@WARPS@", str(warps))
+                    .replace("@THREADS@", str(warps * 32))
+                    .replace("@NT@", str(nt))
+                    .replace("@MODE@", str(mode))
+                    .replace("@STAGE@", str(stage))
+                )
     return "\n".join(parts)
 
 
-_module = None
+_modules = {}
 _ready = None
 
 
+def _module_for(nt: int):
+    if nt not in _modules:
+        _modules[nt] = cuda_jit.Module(_source(nt))
+    return _modules[nt]
+
+
 def ready() -> bool:
-    """Compile once. False means this runtime cannot JIT CUDA."""
-    global _module, _ready
+    """Compile the smallest variant once. False means this runtime cannot JIT CUDA."""
+    global _ready
     if _ready is None:
         try:
-            _module = cuda_jit.Module(_source())
-            _module.kernel("reduce_partials")
+            _module_for(_NTS[0]).kernel("reduce_partials")
             _ready = True
         except Exception as exc:
             print(f"cuda_fp8: unavailable ({type(exc).__name__}: {exc})"[:400])
@@ -427,39 +439,22 @@ def _permutation(device) -> torch.Tensor:
 def quantize(weight: torch.Tensor, group: int = GROUP):
     """``[out, in]`` bfloat16 -> offset-128 INT8 bytes plus ``[out, in/group]`` fp16 scales.
 
-    Symmetric, round to nearest, one scale per 64 values, the scale chosen per
-    block for least squared error rather than taken from the block maximum.
+    Symmetric, round to nearest, one scale per 64 values from the block maximum.
     """
     out, inner = weight.shape
     if inner % group:
         raise ValueError(f"{inner} is not a multiple of {group}")
-    # The block maximum is not the best scale: shrinking it a little clips the
-    # one largest value and rounds the other 63 more finely. Try a short grid
-    # per block and keep the scale with the least squared error, in row chunks
-    # so the candidate tensor stays small.
-    factors = torch.cat([torch.linspace(0.82, 1.0, 19, device=weight.device),
-                         torch.tensor([1.002], device=weight.device)])
-    packed = torch.empty(out, inner, dtype=torch.uint8, device=weight.device)
-    scales = torch.empty(out, inner // group, dtype=torch.float16, device=weight.device)
-    step = max(1, (64 << 20) // (inner * 4 * len(factors)))
-    for start in range(0, out, step):
-        tiles = weight[start:start + step].float().view(-1, inner // group, group)
-        base = (tiles.abs().amax(dim=2, keepdim=True) / 127.0).clamp(min=1e-12)
-        best_err = torch.full(tiles.shape[:2], float("inf"), device=weight.device)
-        best_scale = base.squeeze(2).clone()
-        for f in factors:
-            # Evaluate the scale the kernel will actually use: the fp16 one.
-            scale = (base * f).to(torch.float16).float()
-            q = torch.round(tiles / scale).clamp(-127.0, 127.0)
-            err = ((q * scale - tiles) ** 2).sum(dim=2)
-            better = err < best_err
-            best_err = torch.where(better, err, best_err)
-            best_scale = torch.where(better, scale.squeeze(2), best_scale)
-        scale = best_scale.unsqueeze(2)
-        q = torch.round(tiles / scale).clamp(-127.0, 127.0)
-        packed[start:start + step] = (q + 128.0).to(torch.uint8).view(-1, inner)
-        scales[start:start + step] = scale.squeeze(2).to(torch.float16)
-    return packed.contiguous(), scales.contiguous()
+    tiles = weight.float().view(out, inner // group, group)
+    # The scale the kernel multiplies by is the fp16 one, so quantise against
+    # that. Nudging it up by one fp16 ulp before rounding keeps the block
+    # maximum from clipping when the conversion rounds down. A least-squares
+    # grid search over the scale bought about 1% error and cost ten seconds
+    # of load budget in kernel launches; it is not worth it.
+    scale = (tiles.abs().amax(dim=2, keepdim=True) / 127.0).clamp(min=1e-12)
+    scale = (scale * (1.0 + 2.0 ** -10)).to(torch.float16)
+    q = torch.round(tiles / scale.float()).clamp(-127.0, 127.0)
+    packed = (q + 128.0).to(torch.uint8).view(out, inner).contiguous()
+    return packed, scale.squeeze(2).contiguous()
 
 
 def dequantize(packed) -> torch.Tensor:
@@ -544,7 +539,7 @@ def _launch(mode, prepared, x, out, n_eff, config):
         raise ValueError("the SwiGLU epilogue needs the whole reduction in one block")
     rows_per_block = warps * (8 if mode == 2 else 16)
     rowblocks = -(-n_eff // rows_per_block)
-    kernel = _module.kernel(_name(warps, nt, mode, stage))
+    kernel = _module_for(nt).kernel(_name(warps, nt, mode, stage))
     kernel.set_shared(_shared_bytes(nt, gps) if stage else 0)
     kernel(rowblocks * splitk, warps * 32,
            prepared.weight, prepared.scale, x, out,
@@ -577,7 +572,7 @@ def matmul(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.Tensor:
     partial = torch.empty((splitk, batch, prepared.rows), dtype=torch.float32, device=x.device)
     _launch(1, prepared, x, partial, prepared.rows, (warps, splitk, stage))
     width = batch * prepared.rows
-    reduce = _module.kernel("reduce_partials")
+    reduce = _module_for(_NTS[0]).kernel("reduce_partials")
     reduce(-(-width // 256), 256, partial, out, width, splitk)
     return out
 
@@ -596,15 +591,13 @@ def gate_up_swiglu(x: torch.Tensor, prepared: Prepared, config=(4, 1)) -> torch.
 #: (warps per block, K splits, staged activation). Staged reads the block's
 #: activation slice into shared memory once; unstaged reads fragments through
 #: L1 from the activation in place and never synchronises.
+#: The configurations that won a projection somewhere in the sweeps over
+#: batches 1 to 32 and the five shapes, and nothing else: every entry costs a
+#: graph capture per projection at warmup, inside a run budget of 15 minutes.
 _BASE = [
-    (1, 1), (2, 1), (4, 1), (8, 1),
-    (2, 2), (4, 2), (8, 2),
-    (2, 4), (4, 4), (8, 4),
-    (1, 8), (2, 8), (4, 8),
-    (1, 16), (2, 16), (4, 16),
-    # Enough splits that a warp's whole share is the pair of groups it
-    # prefetches up front: one memory latency, no steady state needed.
-    (2, "pairs"), (4, "pairs"), (8, "pairs"),
+    (8, 1), (8, 2), (8, 4),
+    (4, 2), (4, 4), (4, 8), (4, 16),
+    (2, 8), (1, 8),
 ]
 CONFIGS = [(w, k, 1) for w, k in _BASE]
-SWIGLU_CONFIGS = [(w, 1, 1) for w in (1, 2, 4, 8)]
+SWIGLU_CONFIGS = [(w, 1, 1) for w in (4, 8)]

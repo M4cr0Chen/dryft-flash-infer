@@ -131,15 +131,16 @@ def _mm(x, weight):
     return torch.mm(x, weight)
 
 
-def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
-                use_graph=True, family=None):
+def pick_matmul(batch: int, every, reps: int = 3, trials: int = 3, packed=None,
+                use_graph=True, family=None, quick=False):
     """Choose how to run this projection shape during decode.
 
     ``packed`` is the FP8 operand for every layer (``cuda_fp8.Prepared``), or
     None. ``family`` restricts the race: "bf16" keeps to original-weight
     kernels, "fp8" to the FP8 kernel, None races both. A verification graph
     must use the same weight values as ordinary decode for every projection,
-    which is what the restriction is for.
+    which is what the restriction is for. ``quick`` races cuBLAS against one
+    8-bit configuration only: enough to exercise the path, for the self-check.
 
     ``every`` is the weight from every layer. The measurement cycles through
     all of them because timing one in a loop measures the wrong thing: the qkv
@@ -177,20 +178,11 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
             raise ValueError("an FP8-only race needs FP8 operands")
         best = (None, None, float("inf"))
 
-    if family != "fp8":
-        transposed = [w.t().contiguous() for w in every]
-        if agrees(_mm(x, transposed[0])):
-            elapsed = clock(_mm, transposed)
-            if elapsed < best[2]:
-                best = (_mm, True, elapsed)
-        del transposed
-        torch.cuda.empty_cache()
-
     if packed is not None and family != "bf16":
         from . import cuda_fp8
 
         if cuda_fp8.ready():
-            for cfg in cuda_fp8.CONFIGS:
+            for cfg in (cuda_fp8.CONFIGS[:1] if quick else cuda_fp8.CONFIGS):
                 runner = functools.partial(cuda_fp8.matmul, config=cfg)
                 try:
                     # This projection check catches gross implementation errors.
@@ -204,10 +196,25 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
                 if elapsed < best[2]:
                     best = (runner, "fp8", elapsed)
 
+    # A bfloat16 kernel streams twice the bytes of the 8-bit one. Once 8-bit
+    # has beaten cuBLAS by a clear margin no bfloat16 alternative can catch
+    # it, and every one of them is a Triton or graph compile at warmup, inside
+    # a run budget of 15 minutes across nine workloads. Race them only when
+    # 8-bit did not settle the question, which in practice is batch 32 and up.
+    settled = best[1] == "fp8" and best[2] < incumbent * 0.9
+    if family != "fp8" and not quick and not settled:
+        transposed = [w.t().contiguous() for w in every]
+        if agrees(_mm(x, transposed[0])):
+            elapsed = clock(_mm, transposed)
+            if elapsed < best[2]:
+                best = (_mm, True, elapsed)
+        del transposed
+        torch.cuda.empty_cache()
+
     try:
         from . import cuda_gemv
 
-        if family != "fp8" and cuda_gemv.ready():
+        if family != "fp8" and not quick and not settled and cuda_gemv.ready():
             for cfg in cuda_gemv.CONFIGS:
                 runner = functools.partial(cuda_gemv.cuda_matmul, config=cfg)
                 try:
@@ -221,7 +228,7 @@ def pick_matmul(batch: int, every, reps: int = 3, trials: int = 5, packed=None,
     except Exception:
         pass
 
-    for config in ([] if family == "fp8" else _CONFIGS):
+    for config in ([] if family == "fp8" or quick or settled else _CONFIGS):
         candidate = functools.partial(skinny_matmul, config=config)
         try:
             if not agrees(candidate(x, weight)):

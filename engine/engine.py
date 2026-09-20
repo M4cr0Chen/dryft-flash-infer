@@ -15,6 +15,7 @@ beats a crashed one.
 import array
 import os
 import sys
+import time
 import traceback
 
 import torch
@@ -48,10 +49,10 @@ PREFILL_ROW_BUDGET = 32768
 #: call in fixed overhead regardless of how little cache it reads, which is 36
 #: launches of pure latency per step. Set DRYFT_ATTENTION=sdpa to compare.
 TRITON_ATTENTION = os.environ.get("DRYFT_ATTENTION", "triton") == "triton"
-#: Race a few attention layouts at warmup. Attention is a sixth of a
-#: batch-16 step now that the projections are FP8, so the race is worth its
-#: seconds of warmup. Selection depends on shape and measured time only.
-TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "on") == "on"
+#: Race a few attention layouts at warmup. Each configuration is a Triton
+#: compile, about ten seconds for the set, for roughly 2% of a batch-16 step;
+#: against a 15-minute budget for the whole run it stays opt-in.
+TUNE_ATTENTION = os.environ.get("DRYFT_ATTENTION_TUNE", "off") == "on"
 
 #: Organizer clarification relayed by the user permits quantization. The
 #: teacher-forced quality margin still applies to every emitted position.
@@ -188,6 +189,8 @@ class Engine:
         self.fused_mlp = None
         self.fused_operand = None
         self.partial_config = {}
+        self._quick_race = False
+
     def _self_check(self) -> None:
         """Sanity-check the custom path against native Qwen before timing.
 
@@ -203,7 +206,13 @@ class Engine:
         ).tolist()
 
         expected = list(self._native_generate(ids, steps))
-        got = list(self.generate(ids, steps))
+        # One 8-bit configuration against cuBLAS is enough to exercise every
+        # stage; the full race belongs to the real shape's warmup.
+        self._quick_race = True
+        try:
+            got = list(self.generate(ids, steps))
+        finally:
+            self._quick_race = False
 
         with torch.inference_mode():
             reference = self._native(
@@ -320,9 +329,18 @@ class Engine:
         self.out_event = [torch.cuda.Event() for _ in range(2)] if self.cuda else []
 
         self.draft = DRAFT if (batch == 1 and DRAFT > 0) else 0
+        stamp = time.perf_counter()
+
+        def lap(stage):
+            nonlocal stamp
+            now = time.perf_counter()
+            print(f"engine: warmup {stage} {now - stamp:.1f}s", file=sys.stderr)
+            stamp = now
+
         # Verification processes multiple rows even when the request batch is
         # one. A batch-one GEMV is not a valid runner for that matrix.
         self._choose_matmuls(batch * (self.draft + 1))
+        lap("projection race")
 
         self.drafter = None
         if self.draft:
@@ -345,6 +363,7 @@ class Engine:
             )
 
         self._capture()
+        lap("compile and capture")
         if (SHORT_DRAFT and batch == 1 and not self.draft
                 and (not self.cuda or self.graph is not None)):
             from kernels.speculation import ShortVerifier
@@ -357,6 +376,7 @@ class Engine:
                 traceback.print_exc()
                 print("engine: short verification unavailable", file=sys.stderr)
                 self.short_verifier = None
+            lap("short verifier")
 
     def _quantise(self) -> None:
         """INT8 with 64-wide block scales, laid out for the tensor-core kernel.
@@ -404,10 +424,14 @@ class Engine:
         if not (HAVE_TRITON and pick_matmul is not None and TUNE_MATMUL):
             return
         if self.quantised is None:
+            started = time.perf_counter()
             self._quantise()
+            print(f"engine: warmup quantise {time.perf_counter() - started:.1f}s", file=sys.stderr)
         quantised = self.quantised if USE_FP8 else {}
 
         chosen_families = {}
+        reuse = ({name: fn for name, fn in getattr(self, "_ordinary_matmul", {}).items()
+                  if self.families.get(name) == "fp8"} if families is not None else {})
         first = self.layers[0]
         for name, sample, every in (
             ("qkv", first.qkv, [ly.qkv for ly in self.layers]),
@@ -420,14 +444,21 @@ class Engine:
             packed = quantised.get(name) if family != "bf16" else None
             if family == "fp8" and packed is None:
                 raise RuntimeError(f"{name}: ordinary decode used FP8 but no operand exists")
-            try:
-                chosen, transpose, note = pick_matmul(
-                    batch, every, packed=packed, use_graph=USE_GRAPH, family=family
-                )
-            except Exception:
-                if families is not None:
-                    raise
-                chosen, transpose, note = F.linear, False, "cublas (selection failed)"
+            if family == "fp8" and batch <= 8 and name in reuse:
+                # The 8-bit kernel's tile count is the same for one to eight
+                # rows, so ordinary decode's winning configuration serves the
+                # verification widths without another race.
+                chosen, transpose, note = reuse[name], "fp8", "fp8 (ordinary decode's choice)"
+            else:
+                try:
+                    chosen, transpose, note = pick_matmul(
+                        batch, every, packed=packed, use_graph=USE_GRAPH, family=family,
+                        quick=self._quick_race,
+                    )
+                except Exception:
+                    if families is not None:
+                        raise
+                    chosen, transpose, note = F.linear, False, "cublas (selection failed)"
             self.matmul[name] = chosen
             # A transposed layout is a second copy of the weight. Worth it for
             # the projections cuBLAS reads better that way; prefill keeps the
@@ -452,6 +483,7 @@ class Engine:
             print(f"engine: {name:8s} {tuple(sample.shape)} -> {note}", file=sys.stderr)
         if families is None:
             self.families = chosen_families
+            self._ordinary_matmul = dict(self.matmul)
         self._choose_mlp(batch, chosen_families.get("gate_up", "bf16"))
         if self.cuda:
             torch.cuda.empty_cache()

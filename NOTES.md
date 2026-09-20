@@ -126,6 +126,27 @@ the worst gap at 1.375, on that one prompt. The coverage shapes (3 x 257,
 sources. The E4M3 numbers are kept in `paired-cuda-fp8-20260919.json` and
 `paired-cuda-fp8-final-20260919.json` (the failing run) for the record.
 
+### The 15-minute run budget, and what warmup cost
+
+The first three official runs of this engine did not finish: two exceeded
+the platform's 15-minute whole-run limit and the third was cancelled with
+the public samples passing at 318 / 578 / 3426 tok/s. Load plus warmup had
+grown from about 30 s to 61 to 97 s per workload, and a run has nine of them.
+
+Stage timers in `_ensure` found it: the 8-bit kernel compiled all 48 of its
+variants (12 to 23 s) where a process needs 12; the quantiser's scale search
+was 1.7 million small kernel launches; nine skinny Triton configurations were
+compiled per projection only to lose to a kernel moving half their bytes;
+the attention race compiled eight more; the self-check ran a full race at
+batch 2; the verification widths raced again at batch 1.
+
+Now: one compile per activation tile count, the scale from the block maximum,
+the bfloat16 candidates skipped when 8-bit beats cuBLAS by 10%, the attention
+race opt-in again, the self-check racing one 8-bit configuration, and the
+verification widths reusing ordinary decode's choice. Load plus warmup is
+**29 / 33 / 32 s** at batches 1 / 4 / 16, throughput unchanged
+(330 / 584 / 3385 tok/s on one sample each).
+
 The two thirds of the step that is still not projections at batch 16 --
 attention at 0.57 ms, the two add-norms at 0.27 ms, the launch gap at
 0.12 ms -- is the next pool. The batch-32 GEMM is the other.
